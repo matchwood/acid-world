@@ -1,0 +1,6 @@
+resolver: lts-11.6
+packages:
+- '.'
+extra-deps:
+- rio-0.1.1.0
+- HList-0.5.0.0

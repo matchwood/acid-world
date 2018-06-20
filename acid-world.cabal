@@ -1,0 +1,75 @@
+name:                acid-world
+version:             0.0.0.1
+synopsis:            Acid world
+description:         Please see README.md
+homepage:            http://github.com/matchwood/acid-world#readme
+license:             AllRightsReserved
+author:              Matchwood
+maintainer:          matchwood1@gmail.com
+copyright:           2018 Matchwood
+category:            Database
+build-type:          Simple
+cabal-version:       >= 1.24
+
+library
+  exposed-modules:
+    Acid.World
+    Acid.Core
+  other-modules:
+  build-depends:
+    base,
+    rio,
+    generics-sop
+
+  hs-source-dirs:      src
+  ghc-options:         -Wall
+                       -Wcompat
+                       -Wincomplete-record-updates
+                       -Wincomplete-uni-patterns
+                       -Wredundant-constraints
+                       -Werror
+  default-language:    Haskell2010
+  default-extensions:  AutoDeriveTypeable
+                       BangPatterns
+                       BinaryLiterals
+                       ConstraintKinds
+                       DataKinds
+                       DefaultSignatures
+                       DeriveDataTypeable
+                       DeriveFoldable
+                       DeriveFunctor
+                       DeriveGeneric
+                       DeriveTraversable
+                       DoAndIfThenElse
+                       EmptyDataDecls
+                       ExistentialQuantification
+                       FlexibleContexts
+                       FlexibleInstances
+                       FunctionalDependencies
+                       GADTs
+                       GeneralizedNewtypeDeriving
+                       InstanceSigs
+                       KindSignatures
+                       LambdaCase
+                       MonadFailDesugaring
+                       MultiParamTypeClasses
+                       MultiWayIf
+                       NamedFieldPuns
+                       NoImplicitPrelude
+                       OverloadedStrings
+                       PartialTypeSignatures
+                       PatternGuards
+                       PolyKinds
+                       RankNTypes
+                       RecordWildCards
+                       ScopedTypeVariables
+                       StandaloneDeriving
+                       TupleSections
+                       TypeFamilies
+                       TypeOperators
+                       TypeSynonymInstances
+                       ViewPatterns
+
+source-repository head
+  type:     git
+  location: https://github.com/matchwood/acid-world

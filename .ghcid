@@ -1,0 +1,2 @@
+--command "stack ghci --test --ghci-options=-fobject-code"
+--restart "acid-world.cabal"
