@@ -14,7 +14,8 @@ import qualified Data.HList.FakePrelude as FP
 import qualified Control.Monad.State.Strict as St
 
 import qualified  Data.Vinyl as V
-
+import qualified  Data.Vinyl.TypeLevel as V
+import qualified  Data.Vinyl.Curry as V
 {-
 something :: NP I '[Text, String, Int] -> Bool
 something np = runEvent (Event (Proxy :: Proxy "anotherFunc") np)
@@ -94,6 +95,12 @@ type family MapSegmentS (ss :: [Symbol]) :: [(Symbol, *)] where
   MapSegmentS '[] = '[]
   MapSegmentS (s ': ss) = '(s, SegmentS s) ': MapSegmentS ss
 
+
+type family ToFields (ss :: [Symbol]) = (res :: [(Symbol, *)]) where
+  ToFields '[] = '[]
+  ToFields (s ': ss) = '(s, SegmentS s) ': ToFields ss
+
+
 class (Elem a b ~ 'True) => IsElem (a :: k) (b :: [k])
 instance  (Elem a b ~ 'True) => IsElem a b
 
@@ -107,24 +114,36 @@ class Segment (s :: Symbol) where
 
 instance Segment "Tups" where
   type SegmentS "Tups" = [(Bool, Int)]
-  defaultState _ = []
+  defaultState _ = [(True, 1), (False, 2)]
 
+instance Segment "List" where
+  type SegmentS "List" = [String]
+  defaultState _ = ["Hello", "I", "Work!"]
 
-class (Monad (m ss)) => AcidWorldBackend m (ss :: [(Symbol, *)]) where
+class (V.KnownField a, Segment (V.Fst a), SegmentS (V.Fst a) ~ (V.Snd a)) => KnownSegmentField a
+instance (V.KnownField a, Segment (V.Fst a), SegmentS (V.Fst a) ~ (V.Snd a)) => KnownSegmentField a
+
+class (Monad (m ss), V.AllFields ss, V.AllConstrained KnownSegmentField ss) => AcidWorldBackend m (ss :: [(Symbol, *)]) where
   getState :: m ss (V.FieldRec ss)
-
+  runAcidWorldBackend :: (MonadIO n) => m ss a -> n a
 
 newtype AcidWorldBackendFS ss a = AcidWorldBackendFS (IO a)
   deriving (Functor, Applicative, Monad, MonadIO)
 
-makeField :: forall s. Segment s => V.ElField '(s, SegmentS s)
-makeField = undefined
 
-instance AcidWorldBackend AcidWorldBackendFS ss where
+runAcidWorldBackendFS :: (MonadIO m, AcidWorldBackend AcidWorldBackendFS ss) => AcidWorldBackendFS ss a -> m a
+runAcidWorldBackendFS = runAcidWorldBackend
+
+
+makeField :: forall a. KnownSegmentField a => V.ElField '(V.Fst a, (V.Snd a))
+makeField = (V.Label :: V.Label (V.Fst a)) V.=: (defaultState (Proxy :: Proxy (V.Fst a)))
+
+instance (V.AllFields ss,  V.AllConstrained KnownSegmentField ss) => AcidWorldBackend AcidWorldBackendFS ss where
   getState = do
-    let (a :: V.FieldRec ss) = V.rpuref makeField
+    let (a :: V.FieldRec ss) = V.rpureConstrained (Proxy :: Proxy KnownSegmentField) makeField
+    return a
 
-    return $ a
+  runAcidWorldBackend (AcidWorldBackendFS m) = liftIO m
 
 class (V.HasField V.Rec s ss (SegmentS s), KnownSymbol s) => HasSegment s ss
 instance (V.HasField V.Rec s ss (SegmentS s), KnownSymbol s) => HasSegment s ss
@@ -135,7 +154,8 @@ class (Monad (m ss)) => AcidWorldUpdate m ss where
   putSegment :: (HasSegment s ss) =>  Proxy s -> (SegmentS s) -> m ss ()
   runUpdate :: (AcidWorldBackend n ss) => m ss a -> n ss a
 
-
+runAcidWorldUpdateStatePure :: (AcidWorldBackend m ss) => AcidWorldUpdateStatePure ss a -> m ss a
+runAcidWorldUpdateStatePure = runUpdate
 
 newtype AcidWorldUpdateStatePure ss a = AcidWorldUpdateStatePure (St.State (V.FieldRec ss) a)
   deriving (Functor, Applicative, Monad)
@@ -167,9 +187,11 @@ someMFunc i b t = do
 
 
 
-someFFunc :: (AcidWorldUpdate m ss, Show a) => a -> Bool -> Text -> m ss String
-someFFunc i b t = do
-  pure $ show (i,b,t)
+someFFunc :: (AcidWorldUpdate m ss, HasSegment "List" ss) => String -> String -> String -> m ss ()
+someFFunc a b c = do
+  ls <- getSegment (Proxy :: Proxy "List")
+  let newLs = ls ++ [a, b, c]
+  putSegment (Proxy :: Proxy "List") newLs
 
 
 type EventableR n xs r =
@@ -181,23 +203,26 @@ class Eventable (n :: Symbol) where
   type EventS n :: Symbol
   runEvent :: (AcidWorldUpdate m ss, HasSegment (EventS n) ss) => Proxy n -> HList (EventArgs n) -> m ss (EventResult n)
 
+  runEvent2 :: (AcidWorldUpdate m ss, HasSegment (EventS n) ss) => Proxy n -> V.HList (EventArgs n) -> m ss (EventResult n)
+
 instance Eventable "someMFunc" where
   type EventArgs "someMFunc" = '[Int, Bool, Text]
   type EventResult "someMFunc" = String
   type EventS "someMFunc" = "Tups"
   runEvent _ = hUncurry someMFunc
+  runEvent2 _ = V.runcurry' someMFunc
 
 instance Eventable "someFFunc" where
-  type EventArgs "someFFunc" = '[Int, Bool, Text]
-  type EventResult "someFFunc" = String
-  type EventS "someFFunc" = "Tups"
+  type EventArgs "someFFunc" = '[String, String, String]
+  type EventResult "someFFunc" = ()
+  type EventS "someFFunc" = "List"
   runEvent _ = hUncurry someFFunc
 
-instance Eventable "renamedSomeFFunc" where
-  type EventArgs "renamedSomeFFunc" = '[Int, Bool, Text]
-  type EventResult "renamedSomeFFunc" = String
-  type EventS "renamedSomeFFunc" = "Tups"
-  runEvent _ = runEvent (Proxy :: Proxy "renamedSomeFFunc")
+instance Eventable "returnListState" where
+  type EventArgs "returnListState" = '[]
+  type EventResult "returnListState" = [String]
+  type EventS "returnListState" = "List"
+  runEvent _ _ =  getSegment (Proxy :: Proxy "List")
 
 
 data RegisteredEvent n where
@@ -222,14 +247,24 @@ saveEvent _ = undefined
 issueEvent :: (AcidWorldUpdate m ss, EventableR n xs r, HTuple xs args, HasSegment (EventS n) ss) => Proxy n -> args -> m ss (r)
 issueEvent p args = do
   let e = toEvent p args
-  saveEvent e
+  --saveEvent e
   executeEvent e
 
 executeEvent :: forall m ss n . (AcidWorldUpdate m ss, HasSegment (EventS n) ss ) => Event n -> m ss (EventResult n)
 executeEvent (Event xs) = runEvent (Proxy :: Proxy n) xs
 
 
-app :: (AcidWorldUpdate m ss, HasSegment (EventS "someMFunc") ss) => m ss ()
-app =
-  void $ issueEvent (Proxy :: Proxy ("someMFunc")) ((3 :: Int), False, ("asdf" :: Text))
+app :: (AcidWorldUpdate m ss, HasSegment (EventS "someMFunc") ss, HasSegment (EventS "someFFunc") ss) => m ss String
+app = do
+  s <- issueEvent (Proxy :: Proxy ("someMFunc")) ((3 :: Int), False, ("asdf" :: Text))
+  void $ issueEvent (Proxy :: Proxy ("someFFunc")) ("I", "Really", "do")
+  s2 <- issueEvent (Proxy :: Proxy ("returnListState")) ()
+  return $ concat (s : s2)
 
+
+
+littleTest :: (MonadIO m) => m String
+littleTest = do
+  let (u :: (AcidWorldBackendFS (ToFields '["Tups", "List"]) String)) = runAcidWorldUpdateStatePure app
+
+  runAcidWorldBackendFS u
