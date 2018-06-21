@@ -12,8 +12,9 @@ import Data.HList.HCurry
 import Data.HList.HList
 import qualified Data.HList.FakePrelude as FP
 import qualified Control.Monad.State.Strict as St
-import qualified  Data.TypeMap.Vector as TM
-import qualified  Data.TypeMap.Internal.Unsafe as TM
+
+import qualified  Data.Vinyl as V
+
 {-
 something :: NP I '[Text, String, Int] -> Bool
 something np = runEvent (Event (Proxy :: Proxy "anotherFunc") np)
@@ -37,25 +38,33 @@ deserialiseEvent = undefined
 runEvent :: Event n -> m (EventResult n)-}
 
 
+{-type family LookupT s c where
+  LookupT s (NP I ((Proxy s, t) ': moress)) = t
+  LookupT s (NP I ((Proxy a, t) ': moress)) = LookupT s (NP I moress)
+
 class HasElem (s :: Symbol) c where
-  lookupT :: Proxy s -> c -> SegmentS s
+  lookupT :: Proxy s -> c -> LookupT s c
 
 
 instance (SegmentS s ~ t) => HasElem s (NP I ((Proxy s, t) ': moress)) where
   lookupT _ =  snd . unI . hd
 
 instance (HasElem s (NP I moress)) => HasElem s (NP I ((Proxy a, t) ': moress)) where
-  lookupT = lookupT
+  lookupT s np = lookupT s  $ tl np
 
 
 
 tryLookup :: NP I ('[(Proxy "Tups", [(Bool, Int)])]) -> SegmentS "Tups"
-tryLookup np = lookupT  (Proxy :: Proxy "Tups") np
+tryLookup np = lookupT (Proxy :: Proxy "Tups") np-}
 
 
 
 {-instance HasElem s (s ': moress) where
   lookup _ _
+-}
+{-type family TypeEqual (a :: k) (b :: k) :: Bool where
+  TypeEqual a a = 'True
+  TypeEqual _ _ = 'False
 -}
 
 type family FunctionArgs a = (res :: [*]) where
@@ -88,47 +97,72 @@ type family MapSegmentS (ss :: [Symbol]) :: [(Symbol, *)] where
 class (Elem a b ~ 'True) => IsElem (a :: k) (b :: [k])
 instance  (Elem a b ~ 'True) => IsElem a b
 
-class (CanLookup (EventS n) ss) => HasState n ss
-instance (CanLookup (EventS n) ss) => HasState n ss
 
 
 class Segment (s :: Symbol) where
   type SegmentS s :: *
+  defaultState :: Proxy s -> SegmentS s
+
+
 
 instance Segment "Tups" where
   type SegmentS "Tups" = [(Bool, Int)]
+  defaultState _ = []
 
-{-data AcidWorldBackendFS =
-  AcidWorldBackendFS ()
-class (Monad m) => AcidWorldBackend m
--}
-type CanLookup s ss = (TM.Lookup s (MapSegmentS ss) ~ SegmentS s, KnownNat (TM.Index s (MapSegmentS ss)))
 
-class (Monad (m ss), All Segment ss) => AcidWorldUpdate m ss where
-  getSegment :: (CanLookup s ss) => Proxy s -> m ss (SegmentS s)
-  put ::  Proxy s -> (SegmentS s) -> m ss ()
+class (Monad (m ss)) => AcidWorldBackend m (ss :: [(Symbol, *)]) where
+  getState :: m ss (V.FieldRec ss)
 
-{-class () => LookupSegment ss s where
-  lookupSegment :: Proxy s -> Proxy ss -> TM.TypeVector (MapSegmentS (ss)) -> SegmentS s
 
-instance (TM.Lookup s (MapSegmentS ss) ~ SegmentS s, KnownNat (TM.Index s (MapSegmentS ss))) => LookupSegment ss s where
-  lookupSegment _ _ tmv = TM.index @s tmv-}
+newtype AcidWorldBackendFS ss a = AcidWorldBackendFS (IO a)
+  deriving (Functor, Applicative, Monad, MonadIO)
 
-newtype AcidWorldUpdateStatePure (ss :: [Symbol]) a = AcidWorldUpdateStatePure (St.State (TM.TypeVector (MapSegmentS (ss))) a)
+makeField :: forall s. Segment s => V.ElField '(s, SegmentS s)
+makeField = undefined
+
+instance AcidWorldBackend AcidWorldBackendFS ss where
+  getState = do
+    let (a :: V.FieldRec ss) = V.rpuref makeField
+
+    return $ a
+
+class (V.HasField V.Rec s ss (SegmentS s), KnownSymbol s) => HasSegment s ss
+instance (V.HasField V.Rec s ss (SegmentS s), KnownSymbol s) => HasSegment s ss
+
+
+class (Monad (m ss)) => AcidWorldUpdate m ss where
+  getSegment :: (HasSegment s ss) =>  Proxy s -> m ss (SegmentS s)
+  putSegment :: (HasSegment s ss) =>  Proxy s -> (SegmentS s) -> m ss ()
+  runUpdate :: (AcidWorldBackend n ss) => m ss a -> n ss a
+
+
+
+newtype AcidWorldUpdateStatePure ss a = AcidWorldUpdateStatePure (St.State (V.FieldRec ss) a)
   deriving (Functor, Applicative, Monad)
 
 
-instance (All Segment ss) => AcidWorldUpdate AcidWorldUpdateStatePure ss where
+instance AcidWorldUpdate AcidWorldUpdateStatePure ss where
   getSegment (Proxy :: Proxy s) = do
-    tmv <- AcidWorldUpdateStatePure St.get
-    pure $ TM.index @s tmv
+    r <- AcidWorldUpdateStatePure St.get
+    pure $ V.getField $ V.rgetf (V.Label :: V.Label s) r
+  putSegment (Proxy :: Proxy s) seg = do
+    r <- AcidWorldUpdateStatePure St.get
+    AcidWorldUpdateStatePure (St.put $ V.rputf (V.Label :: V.Label s) seg r)
+  runUpdate (AcidWorldUpdateStatePure stm) = do
+    s <- getState
+    let (a, _) = St.runState stm s
+    return a
 
 
-someMFunc :: (AcidWorldUpdate m ss, CanLookup "Tups" ss) => Int -> Bool -> Text -> m ss String
+    -- undefined
+    -- pure $ TM.index @s tmv
+
+
+someMFunc :: (AcidWorldUpdate m ss, HasSegment "Tups" ss) => Int -> Bool -> Text -> m ss String
 someMFunc i b t = do
   tups <- getSegment (Proxy :: Proxy "Tups")
   let newTups = (tups ++ [(b, i)])
-  put (Proxy :: Proxy "Tups") newTups
+  putSegment (Proxy :: Proxy "Tups") newTups
   pure $ show t ++ show newTups
 
 
@@ -145,7 +179,7 @@ class Eventable (n :: Symbol) where
   type EventArgs n :: [*]
   type EventResult n :: *
   type EventS n :: Symbol
-  runEvent :: (AcidWorldUpdate m ss, CanLookup (EventS n) ss) => Proxy n -> HList (EventArgs n) -> m ss (EventResult n)
+  runEvent :: (AcidWorldUpdate m ss, HasSegment (EventS n) ss) => Proxy n -> HList (EventArgs n) -> m ss (EventResult n)
 
 instance Eventable "someMFunc" where
   type EventArgs "someMFunc" = '[Int, Bool, Text]
@@ -185,149 +219,17 @@ saveEvent :: Event n -> m ()
 saveEvent _ = undefined
 
 
-issueEvent :: (HasState n ss, AcidWorldUpdate m ss, EventableR n xs r, HTuple xs args) => Proxy n -> args -> m ss (r)
+issueEvent :: (AcidWorldUpdate m ss, EventableR n xs r, HTuple xs args, HasSegment (EventS n) ss) => Proxy n -> args -> m ss (r)
 issueEvent p args = do
   let e = toEvent p args
   saveEvent e
   executeEvent e
 
-executeEvent :: forall m ss n . (AcidWorldUpdate m ss, HasState n ss) => Event n -> m ss (EventResult n)
+executeEvent :: forall m ss n . (AcidWorldUpdate m ss, HasSegment (EventS n) ss ) => Event n -> m ss (EventResult n)
 executeEvent (Event xs) = runEvent (Proxy :: Proxy n) xs
 
 
-app :: (AcidWorldUpdate m ss, CanLookup "Tups" ss) => m ss ()
+app :: (AcidWorldUpdate m ss, HasSegment (EventS "someMFunc") ss) => m ss ()
 app =
   void $ issueEvent (Proxy :: Proxy ("someMFunc")) ((3 :: Int), False, ("asdf" :: Text))
-
-
-
-{-toTaggedEvent :: forall f ar xs r n. (ar ~ ArityS f, FP.ArityRev f ar, FP.ArityFwd f ar, HCurry' ar f xs r) => Proxy n -> f -> TaggedEvent n
-toTaggedEvent p f = TaggedEvent p (Proxy :: Proxy xs) (Proxy :: Proxy r) f
-
-
-test :: TaggedEvent "someMFunc"
-test = toTaggedEvent (Proxy :: Proxy "someMFunc") someMFunc
--}
-{-
-toRegisteredEvent :: n ->
--}
-
-{-data TaggedEvent (n :: Symbol) f where
-  TaggedEvent :: (EventFM n f) => Proxy n -> Proxy f -> TaggedEvent n f
--}
-{-toTaggedEvent :: Proxy n -> f -> TaggedEvent n f
-toTaggedEvent = TaggedEvent
-
-runTaggedEvent :: TaggedEvent n f -> f
-runTaggedEvent (TaggedEvent _ f) = f-}
-
-
-{-data Event (n :: Symbol) xs where
-  Event :: (Apply (EventF n) xs) => (Proxy n) -> (NP I xs) -> Event n xs
-
-runEvent :: TaggedEvent n f -> Event n xs -> ApplyResult f xs
-runEvent (TaggedEvent _ f)  (Event _ np) = apply f np
--}
-
-
-
-
-{-
-class ToBackendMonad a r where
-  toBackendMonad :: a -> m r
-
-instance (BackendMonad m) =>  IsBMonad (m a)
-
-class (IsBMonad a) => EventFM n a where
-  eventFM :: Proxy n -> a
-
-
-instance (BackendMonad m) => EventFM "something" (Int -> m Bool) where
-  eventFM _ i = pure $ i > 0-}
-
-{-
-type family EventF (n :: Symbol)
-
-type instance EventF "something" = Int -> Bool
--}
-{-
-
-class (Monad m) => BackendMonad m where
-
-
-
-class (BackendMonad m, EventResult m n ~ FunctionResult (EventT m n)) => Eventable m (n :: Symbol)  where
-  type EventT m n :: *
-  type EventResult m n :: *
-  event ::Proxy m -> (Proxy n) -> EventT m n
-
-
-instance (BackendMonad m) => Eventable m "anotherFunc" where
-  type EventT m "anotherFunc" = Text -> String -> Int -> m Bool
-  type EventResult m "anotherFunc" = m Bool
-  event _ _ =  anotherFunc
--}
-
-
-
-
-
-anotherFunc :: Text -> String -> Int -> m Bool
-anotherFunc = undefined
-
-{-
-
--}
-{-extractEvent :: Event n xs -> DropResult (EventT n) -> m (FunctionResult (EventT n))
-extractEvent (Event pn _) = event pn-}
-
-{-
-runEvent :: ( BackendMonad m) => Event n xs -> m (FunctionResult (EventT n))
-runEvent (Event pn np) = apply (event pn) np
--}
-{-class ApplyM m f xs where
-  applyM :: f -> (NP I xs) ->  m (ApplyResult f xs)
-
-
-instance ApplyM m (m a) ('[]) where
-  applyM f _ = f
-
-instance ApplyM m (a -> b) (a ': '[]) where
-  applyM f np = f (unI . hd $ np)
-
-instance (ApplyM m b (x ': xs)) => ApplyM m (a -> b) (a ': x ': xs) where
-  applyM f np = apply (f (unI . hd $ np)) (tl np)-}
-
-
-
-
-class Apply f xs where
-  type ApplyResult f xs
-  apply :: f -> (NP I xs) ->  ApplyResult f xs
-
-
-instance Apply (a) ('[]) where
-  type ApplyResult a  '[] = a
-  apply f _ = f
-
-instance Apply (a -> b) (a ': '[]) where
-  type ApplyResult (a -> b) (a ': '[]) = b
-  apply f np = f (unI . hd $ np)
-
-instance (Apply b (x ': xs)) => Apply (a -> b) (a ': x ': xs) where
-  type ApplyResult (a -> b) (a ': x ': xs) = ApplyResult b (x ': xs)
-  apply f np = apply (f (unI . hd $ np)) (tl np)
-
-
-
-
-
-
-
-{-class Apply (f :: * -> k) (xs :: [*]) where
-  apply :: ((a ': '[moreXs]) ~ xs)=> f -> (NP I xs) ->  f a-}
-
-
-{-apply ::((a ': moreXs ) ~ xs) => (a -> b) -> NP I xs -> b
-apply = undefined-}
 

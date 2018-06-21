@@ -22,7 +22,7 @@ library
     generics-sop,
     HList,
     mtl,
-    type-map
+    vinyl
 
   hs-source-dirs:      src
   ghc-options:         -Wall
