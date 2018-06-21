@@ -19,7 +19,10 @@ library
   build-depends:
     base,
     rio,
-    generics-sop
+    generics-sop,
+    HList,
+    mtl,
+    type-map
 
   hs-source-dirs:      src
   ghc-options:         -Wall
@@ -65,6 +68,7 @@ library
                        ScopedTypeVariables
                        StandaloneDeriving
                        TupleSections
+                       TypeApplications
                        TypeFamilies
                        TypeOperators
                        TypeSynonymInstances
