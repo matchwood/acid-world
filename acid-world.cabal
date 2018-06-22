@@ -15,6 +15,7 @@ library
   exposed-modules:
     Acid.World
     Acid.Core
+    Acid.Core.Segment
   other-modules:
   build-depends:
     base,

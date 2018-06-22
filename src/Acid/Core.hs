@@ -1,6 +1,5 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
 {-# OPTIONS_GHC -fno-warn-orphans#-}
 
 module Acid.Core where
@@ -13,7 +12,6 @@ import qualified  RIO.Vector as V
 import Generics.SOP
 import Generics.SOP.NP
 import GHC.TypeLits
-import GHC.Exts
 import qualified Control.Monad.State.Strict as St
 
 import qualified  Data.Vinyl as V
@@ -25,22 +23,24 @@ import qualified  Data.Vinyl.Functor as V
 import qualified Data.Aeson as Aeson
 import Data.Aeson(ToJSON(..), Value(..))
 
+import Acid.Core.Segment
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 showSymbol :: (KnownSymbol a) => proxy a -> T.Text
 showSymbol p = T.pack $ symbolVal p
 
-type family FunctionArgs a = (res :: [*]) where
-  FunctionArgs (a -> b) = (a ': FunctionArgs b)
-  FunctionArgs (a) = '[]
-
-type family DropResult a where
-  DropResult (a -> b -> c) = a -> DropResult (b -> c)
-  DropResult (a -> b) = a
-
-type family FunctionResult a where
-  FunctionResult (a -> b -> c -> d) = d
-  FunctionResult (a -> b -> c) = c
-  FunctionResult (a -> b) = b
-  FunctionResult a = a
 
 
 type family Elem (a :: k) (b :: [k]) :: Bool where
@@ -48,24 +48,19 @@ type family Elem (a :: k) (b :: [k]) :: Bool where
     Elem a (a ': xs) = 'True
     Elem a (b ': xs) = Elem a xs
 
-type family MapSegmentS (ss :: [Symbol]) :: [(Symbol, *)] where
-  MapSegmentS '[] = '[]
-  MapSegmentS (s ': ss) = '(s, SegmentS s) ': MapSegmentS ss
-
-
-type family ToFields (ss :: [Symbol]) = (res :: [(Symbol, *)]) where
-  ToFields '[] = '[]
-  ToFields (s ': ss) = '(s, SegmentS s) ': ToFields ss
-type family ToEvents (nn :: [Symbol]) = (res :: [*]) where
-  ToEvents '[] = '[]
-  ToEvents (n ': nn) = (Event n) ': ToEvents nn
-
-npToHList :: NP I xs -> V.HList xs
-npToHList Nil = V.RNil
-npToHList ((:*) ix restNp) = (V.Identity (unI ix)) V.:& (npToHList restNp)
-
 class (Elem a b ~ 'True) => IsElem (a :: k) (b :: [k])
 instance  (Elem a b ~ 'True) => IsElem a b
+
+
+
+npToVinylRec :: (forall a. f a -> g a) -> NP f xs -> V.Rec g xs
+npToVinylRec _ Nil = V.RNil
+npToVinylRec f ((:*) a restNp) = f a V.:& (npToVinylRec f restNp)
+
+npIToVinylHList :: NP I xs -> V.HList xs
+npIToVinylHList np = npToVinylRec (V.Identity . unI) np
+
+
 
 class ToText (a :: k) where
   toText :: Proxy a -> Text
@@ -92,53 +87,27 @@ recToJSON xs =
 eventPath :: FilePath
 eventPath = "./event.json"
 
-class Segment (s :: Symbol) where
-  type SegmentS s :: *
-  defaultState :: Proxy s -> SegmentS s
 
 
-type SegmentsState ss = V.FieldRec (ToFields ss)
-type EventsList nn = V.HList (ToEvents nn)
-
-class ToRealEvent n a where
-  toRealEvent :: Proxy n -> a -> Event n
 
 
-class (V.KnownField a, Segment (V.Fst a), SegmentS (V.Fst a) ~ (V.Snd a)) => KnownSegmentField a
-instance (V.KnownField a, Segment (V.Fst a), SegmentS (V.Fst a) ~ (V.Snd a)) => KnownSegmentField a
-
-class (V.HasField V.Rec s ss (SegmentS s), KnownSymbol s) => HasSegment s ss
-instance (V.HasField V.Rec s ss (SegmentS s), KnownSymbol s) => HasSegment s ss
-
-class (V.HasField V.Rec s ss (SegmentS s), KnownSymbol s) => HasSegmentF ss s
-instance (V.HasField V.Rec s ss (SegmentS s), KnownSymbol s) => HasSegmentF ss s
-
-type family HasSegments state ss :: Constraint where
-  HasSegments state ss = V.AllConstrained (HasSegmentF (ToFields state)) ss
 
 class (IsElem n nn, Eventable n) => HasEvent nn n
 instance (IsElem n nn, Eventable n) => HasEvent nn n
 
 
-class (Monad (m ss nn), V.AllFields (ToFields ss), V.AllConstrained KnownSegmentField (ToFields ss)) => AcidWorldBackend (m :: [Symbol] -> [Symbol] -> * -> *) (ss :: [Symbol]) (nn :: [Symbol]) where
+class ( Monad (m ss nn)
+      , ValidSegmentNames ss) =>
+  AcidWorldBackend (m :: [Symbol] -> [Symbol] -> * -> *) (ss :: [Symbol]) (nn :: [Symbol]) where
   getState :: m ss nn (SegmentsState ss)
   runAcidWorldBackend :: (MonadIO n) => m ss nn a -> n a
   loadEvents :: m ss nn [WrappedEvent ss nn]
-
   runWrappedEvent :: (SegmentsState ss) -> WrappedEvent ss nn -> m ss nn (SegmentsState ss)
   runWrappedEvent s (WrappedEvent e) = do
     (_, s') <- runUpdateEvent (Proxy :: Proxy (AcidWorldUpdateStatePure ss)) e s
     return s'
   runEvents :: SegmentsState ss -> [WrappedEvent ss nn] -> m ss nn (SegmentsState ss)
   runEvents s nn = foldM runWrappedEvent s nn
-
-{-    where-}
-{-      appliedEvents :: [SegmentsState ss -> m ss nn (SegmentsState ss)]
-      appliedEvents = V.rfoldMap applyEvent nn
-      applyEvent :: (HasSegments ss (EventS n)) => V.Identity x -> [SegmentsState ss -> m ss nn (SegmentsState ss)]
-      applyEvent e = [ \s -> do
-        (_, s') <- runUpdateEvent (Proxy :: Proxy (AcidWorldUpdateStatePure ss)) (toEvent (Proxy :: Proxy n) e) s
-        return s']-}
 
 
 
@@ -157,15 +126,14 @@ runAcidWorldBackendFS :: (MonadIO m, AcidWorldBackend AcidWorldBackendFS ss nn) 
 runAcidWorldBackendFS = runAcidWorldBackend
 
 
-makeDefaultSegment :: forall a. KnownSegmentField a => V.ElField '(V.Fst a, (V.Snd a))
-makeDefaultSegment = (V.Label :: V.Label (V.Fst a)) V.=: (defaultState (Proxy :: Proxy (V.Fst a)))
+
 
 
 class (Eventable n, HasSegments ss (EventS n)) => ConstraintOnN ss n
 instance (Eventable n, HasSegments ss (EventS n)) => ConstraintOnN ss n
 
 
-instance (V.AllFields (ToFields ss),  V.AllConstrained KnownSegmentField (ToFields ss),  All (ConstraintOnN ss) nn) => AcidWorldBackend AcidWorldBackendFS ss nn where
+instance (V.AllFields (ToSegmentFields ss),  V.AllConstrained KnownSegmentField (ToSegmentFields ss),  All (ConstraintOnN ss) nn) => AcidWorldBackend AcidWorldBackendFS ss nn where
 
   loadEvents = do
     bl <- BL.readFile eventPath
@@ -181,7 +149,7 @@ instance (V.AllFields (ToFields ss),  V.AllConstrained KnownSegmentField (ToFiel
   saveEvent e = BL.writeFile eventPath (Aeson.encode e)
 
   getState = do
-    let (a :: V.FieldRec (ToFields ss)) = V.rpureConstrained (Proxy :: Proxy KnownSegmentField) makeDefaultSegment
+    let (a :: V.FieldRec (ToSegmentFields ss)) = V.rpureConstrained (Proxy :: Proxy KnownSegmentField) makeDefaultSegment
 
     es <- loadEvents
     runEvents a es
@@ -189,14 +157,11 @@ instance (V.AllFields (ToFields ss),  V.AllConstrained KnownSegmentField (ToFiel
   runAcidWorldBackend (AcidWorldBackendFS m) = liftIO m
 
 
-{-class (V.AllConstrained (HasSegmentF state) ss) => HasSegments state ss
-instance (V.AllConstrained (HasSegmentF state) ss) => HasSegments state ss
--}
 
 
 class (Monad (m ss)) => AcidWorldUpdate m ss where
-  getSegment :: (HasSegment s (ToFields ss)) =>  Proxy s -> m ss (SegmentS s)
-  putSegment :: (HasSegment s (ToFields ss)) =>  Proxy s -> (SegmentS s) -> m ss ()
+  getSegment :: (HasSegment (ToSegmentFields ss) s) =>  Proxy s -> m ss (SegmentS s)
+  putSegment :: (HasSegment (ToSegmentFields ss) s) =>  Proxy s -> (SegmentS s) -> m ss ()
   runUpdateEvent :: (AcidWorldBackend b ss nn, HasSegments ss (EventS n)) => Proxy (m ss) -> Event n -> (SegmentsState ss) -> b ss nn (EventResult n, SegmentsState ss)
 
 
@@ -249,7 +214,7 @@ decodeWrappedEvent (Object hm) p =
     _ -> error "Expected to get an array"
   where
     toHList :: [Value] -> V.HList xs
-    toHList vs = npToHList (xsNp vs)
+    toHList vs = npIToVinylHList (xsNp vs)
     xsNp :: [Value] -> NP I xs
     xsNp vs = cmap_NP (Proxy :: Proxy Aeson.FromJSON) argToJSON (proxyNp vs)
     argToJSON :: (Aeson.FromJSON a) => ValueHolder a -> I a
@@ -284,14 +249,14 @@ instance Segment "List" where
   defaultState _ = ["Hello", "I", "Work!"]
 
 
-someMFunc :: (AcidWorldUpdate m ss, HasSegment "Tups" (ToFields ss)) => Int -> Bool -> Text -> m ss String
+someMFunc :: (AcidWorldUpdate m ss, HasSegment (ToSegmentFields ss)  "Tups" ) => Int -> Bool -> Text -> m ss String
 someMFunc i b t = do
   tups <- getSegment (Proxy :: Proxy "Tups")
   let newTups = (tups ++ [(b, i)])
   putSegment (Proxy :: Proxy "Tups") newTups
   pure $ show t ++ show newTups
 
-someFFunc :: (AcidWorldUpdate m ss, HasSegment "List" (ToFields ss)) => String -> String -> String -> m ss [String]
+someFFunc :: (AcidWorldUpdate m ss, HasSegment (ToSegmentFields ss)  "List") => String -> String -> String -> m ss [String]
 someFFunc a b c = do
   ls <- getSegment (Proxy :: Proxy "List")
   let newLs = ls ++ [a, b, c]
