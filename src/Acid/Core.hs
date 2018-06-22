@@ -24,7 +24,7 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson(ToJSON(..), Value(..))
 
 import qualified Control.Concurrent.STM.TVar as  TVar
-import Control.Concurrent.STM (atomically)
+import qualified Control.Concurrent.STM  as STM
 
 import Acid.Core.Segment
 import Acid.Core.Utils
@@ -35,7 +35,6 @@ data AcidWorld  ss nn where
                  AcidWorldBackend bMonad ss nn
                , AcidWorldUpdate uMonad ss
                ) => {
-    acidWorldInitialSegmentsState :: (SegmentsState ss),
     acidWorldBackendMonad :: Proxy bMonad,
     acidWorldUpdateMonad :: Proxy uMonad,
     acidWorldBackendInitState :: AWBState bMonad ss nn,
@@ -50,9 +49,8 @@ openAcidWorld :: forall m ss nn bMonad uMonad.
                , AcidWorldUpdate uMonad ss
                ) => Maybe (SegmentsState ss) -> Proxy bMonad -> Proxy uMonad ->  m (AcidWorld ss nn)
 openAcidWorld mDefSt acidWorldBackendMonad acidWorldUpdateMonad = do
-  let acidWorldInitialSegmentsState = fromMaybe (defaultSegmentsState (Proxy :: Proxy ss)) mDefSt
-  acidWorldBackendInitState <- initialiseBackend acidWorldInitialSegmentsState
-  acidWorldUpdateMonadInitState <- initialiseUpdate acidWorldInitialSegmentsState
+  let defState = fromMaybe (defaultSegmentsState (Proxy :: Proxy ss)) mDefSt
+  (acidWorldBackendInitState, acidWorldUpdateMonadInitState) <- initialise acidWorldUpdateMonad defState
   return $ AcidWorld{..}
 
 
@@ -63,26 +61,22 @@ update (AcidWorld {..}) = handleUpdateEvent acidWorldBackendInitState acidWorldU
 AcidWorldBackend
 -}
 class ( Monad (m ss nn)
+      , MonadIO (m ss nn)
       , ValidSegmentNames ss
       , ValidEventNames ss nn
       ) =>
   AcidWorldBackend (m :: [Symbol] -> [Symbol] -> * -> *) (ss :: [Symbol]) (nn :: [Symbol]) where
   data AWBState m ss nn
-  initialiseBackend :: MonadIO z => (SegmentsState ss) -> z (AWBState m ss nn)
-  getState :: m ss nn (SegmentsState ss)
-
+  initialise :: (MonadIO z, AcidWorldUpdate uMonad ss) => (Proxy uMonad) -> (SegmentsState ss) -> z (AWBState m ss nn, AWUState uMonad ss)
+  -- should return the most recent checkpoint state, if any
+  getLastCheckpointState :: m ss nn (Maybe (SegmentsState ss))
+  getLastCheckpointState = pure Nothing
+  -- return events since the last checkpoint, if any
   loadEvents :: m ss nn [WrappedEvent ss nn]
-  runWrappedEvent :: (SegmentsState ss) -> WrappedEvent ss nn -> m ss nn (SegmentsState ss)
-  runWrappedEvent s (WrappedEvent e) = undefined
-{-    (_, s') <- runUpdateEvent (Proxy :: Proxy (AcidWorldUpdateStatePure ss)) e s
-    return s'-}
-  runWrappedEvents :: SegmentsState ss -> [WrappedEvent ss nn] -> m ss nn (SegmentsState ss)
-  runWrappedEvents s nn = foldM runWrappedEvent s nn
-
-
-
+  loadEvents = pure []
   persistEvent :: (MonadIO z) => (AWBState m ss nn) -> Event n -> z ()
   handleUpdateEvent :: (IsValidEvent ss nn n, MonadIO z, AcidWorldUpdate u ss) => (AWBState m ss nn) -> (AWUState u ss) -> Event n -> z (EventResult n)
+
 
 {-  handleUpdateEvent e = do
     s <- getState
@@ -98,7 +92,10 @@ instance ( ValidSegmentNames ss
          , ValidEventNames ss nn ) =>
   AcidWorldBackend AcidWorldBackendFS ss nn where
   data AWBState AcidWorldBackendFS ss nn = AWBStateBackendFS
-  initialiseBackend _ = pure AWBStateBackendFS
+  initialise (Proxy :: Proxy uMonad) defState = do
+    let (AcidWorldBackendFS m :: AcidWorldBackendFS ss nn (AWUState uMonad ss)) = initialiseUpdate defState
+    uState <- liftIO m
+    pure (AWBStateBackendFS, uState)
   loadEvents = do
     bl <- BL.readFile eventPath
     case Aeson.eitherDecode' bl of
@@ -115,11 +112,6 @@ instance ( ValidSegmentNames ss
     persistEvent awb e
     let (AcidWorldBackendFS m :: AcidWorldBackendFS ss nn (EventResult n)) = runUpdateEvent awu e
     liftIO $ m
-  getState = do
-    let defState = defaultSegmentsState (Proxy :: Proxy ss)
-
-    es <- loadEvents
-    runWrappedEvents defState es
 
 
 
@@ -130,9 +122,11 @@ AcidWorld Inner monad
 -}
 class (Monad (m ss)) => AcidWorldUpdate m ss where
   data AWUState m ss
-  initialiseUpdate :: MonadIO z => (SegmentsState ss) -> z (AWUState m ss)
+  initialiseUpdate :: AcidWorldBackend b ss nn => (SegmentsState ss) -> b ss nn (AWUState m ss)
   getSegment :: (HasSegment ss s) =>  Proxy s -> m ss (SegmentS s)
   putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> m ss ()
+  runWrappedEvent :: WrappedEvent ss e -> m ss ()
+  runWrappedEvent (WrappedEvent (Event xs :: Event n)) = void $ runEvent (Proxy :: Proxy n) xs
   runUpdateEvent :: ( AcidWorldBackend b ss nn
                     , HasSegments ss (EventSegments n)) =>
     AWUState m ss -> Event n -> b ss nn (EventResult n)
@@ -143,8 +137,17 @@ newtype AcidWorldUpdateStatePure ss a = AcidWorldUpdateStatePure (St.State (Segm
 
 
 instance AcidWorldUpdate AcidWorldUpdateStatePure ss where
-  data AWUState AcidWorldUpdateStatePure ss = AWUStateStatePure
-  initialiseUpdate _ = pure AWUStateStatePure
+  data AWUState AcidWorldUpdateStatePure ss = AWUStateStatePure {
+      aWUStateStatePure :: TVar (SegmentsState ss)
+    }
+  initialiseUpdate defState = do
+    mCpState <- getLastCheckpointState
+    let startState = fromMaybe defState mCpState
+    events <- loadEvents
+    let (AcidWorldUpdateStatePure stm) = mapM runWrappedEvent events
+    let (_ , s) = St.runState stm startState
+    tvar <- liftIO $ STM.atomically $ TVar.newTVar s
+    pure $ AWUStateStatePure tvar
   getSegment (Proxy :: Proxy s) = do
     r <- AcidWorldUpdateStatePure St.get
     pure $ V.getField $ V.rgetf (V.Label :: V.Label s) r
