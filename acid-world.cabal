@@ -22,7 +22,8 @@ library
     generics-sop,
     HList,
     mtl,
-    vinyl
+    vinyl,
+    aeson
 
   hs-source-dirs:      src
   ghc-options:         -Wall
