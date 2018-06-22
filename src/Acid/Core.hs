@@ -8,7 +8,7 @@ import RIO
 import Generics.SOP
 --import Generics.SOP.NP
 import GHC.TypeLits
---import GHC.Exts
+import GHC.Exts
 import qualified Control.Monad.State.Strict as St
 
 import qualified  Data.Vinyl as V
@@ -69,17 +69,24 @@ class (Monad (m ss), V.AllFields ss, V.AllConstrained KnownSegmentField ss) => A
 newtype AcidWorldBackendFS ss a = AcidWorldBackendFS (IO a)
   deriving (Functor, Applicative, Monad, MonadIO)
 
+-- @todo these should move so that we don't have separate runMonad functions
+issueEvent :: (AcidWorldBackend m ss, EventableR n xs r,   HasSegments ss (EventS n) ) => Event n -> m ss (r)
+issueEvent e =
+  --saveEvent e
+  executeEvent e
+executeEvent :: forall m ss n . (AcidWorldBackend m ss,  HasSegments ss (EventS n) ) => Event n -> m ss (EventResult n)
+executeEvent (Event xs) = runAcidWorldUpdateStatePure $  runEvent (Proxy :: Proxy n) xs
 
 runAcidWorldBackendFS :: (MonadIO m, AcidWorldBackend AcidWorldBackendFS ss) => AcidWorldBackendFS ss a -> m a
 runAcidWorldBackendFS = runAcidWorldBackend
 
 
-makeField :: forall a. KnownSegmentField a => V.ElField '(V.Fst a, (V.Snd a))
-makeField = (V.Label :: V.Label (V.Fst a)) V.=: (defaultState (Proxy :: Proxy (V.Fst a)))
+makeDefaultSegment :: forall a. KnownSegmentField a => V.ElField '(V.Fst a, (V.Snd a))
+makeDefaultSegment = (V.Label :: V.Label (V.Fst a)) V.=: (defaultState (Proxy :: Proxy (V.Fst a)))
 
 instance (V.AllFields ss,  V.AllConstrained KnownSegmentField ss) => AcidWorldBackend AcidWorldBackendFS ss where
   getState = do
-    let (a :: V.FieldRec ss) = V.rpureConstrained (Proxy :: Proxy KnownSegmentField) makeField
+    let (a :: V.FieldRec ss) = V.rpureConstrained (Proxy :: Proxy KnownSegmentField) makeDefaultSegment
     return a
 
   runAcidWorldBackend (AcidWorldBackendFS m) = liftIO m
@@ -90,9 +97,11 @@ instance (V.HasField V.Rec s ss (SegmentS s), KnownSymbol s) => HasSegment s ss
 class (V.HasField V.Rec s ss (SegmentS s), KnownSymbol s) => HasSegmentF ss s
 instance (V.HasField V.Rec s ss (SegmentS s), KnownSymbol s) => HasSegmentF ss s
 
-class (V.AllConstrained (HasSegmentF state) ss) => HasSegments state ss
+{-class (V.AllConstrained (HasSegmentF state) ss) => HasSegments state ss
 instance (V.AllConstrained (HasSegmentF state) ss) => HasSegments state ss
-
+-}
+type family HasSegments state ss :: Constraint where
+  HasSegments state ss = V.AllConstrained (HasSegmentF state) ss
 
 class (Monad (m ss)) => AcidWorldUpdate m ss where
   getSegment :: (HasSegment s ss) =>  Proxy s -> m ss (SegmentS s)
@@ -123,7 +132,7 @@ instance AcidWorldUpdate AcidWorldUpdateStatePure ss where
 type EventableR n xs r =
   (Eventable n, EventArgs n ~ xs, EventResult n ~ r)
 
-class Eventable (n :: Symbol) where
+class Eventable n where
   type EventArgs n :: [*]
   type EventResult n :: *
   type EventS n :: [Symbol]
@@ -141,13 +150,6 @@ saveEvent :: Event n -> m ()
 saveEvent _ = undefined
 
 
-issueEvent :: (AcidWorldUpdate m ss, EventableR n xs r, HasSegments ss (EventS n) ) => Event n -> m ss (r)
-issueEvent e =
-  --saveEvent e
-  executeEvent e
-
-executeEvent :: forall m ss n . (AcidWorldUpdate m ss,  HasSegments ss (EventS n) ) => Event n -> m ss (EventResult n)
-executeEvent (Event xs) = runEvent (Proxy :: Proxy n) xs
 
 
 
@@ -198,12 +200,29 @@ instance Eventable "returnListState" where
   type EventResult "returnListState" = [String]
   type EventS "returnListState" = '["List", "Tups"]
   runEvent _ _ =  do
-    t <- getSegment (Proxy :: Proxy "List")
+    t <- getSegment (Proxy :: Proxy "Tups")
     l <- getSegment (Proxy :: Proxy "List")
     return $ show t : l
 
+type family Union (a :: [k]) (b :: [k]) = (res :: [k]) where
+  Union '[] b = b
+  Union (a ': xs) b = a ': Union xs b
 
-app :: (AcidWorldUpdate m ss, HasSegments ss (EventS "someMFunc"), HasSegments ss (EventS "someFFunc")) => m ss String
+{-instance (Eventable a, Eventable b) => Eventable (a, b) where
+  type EventArgs (a, b) = '[(V.HList (EventArgs a), V.HList (EventArgs b))]
+  type EventResult (a, b) = (EventResult a, EventResult b)
+  type EventS (a, b) = (EventS a) V.++ (EventS b)
+  --type EventC (a, b) = ()
+  runEvent _ args = do
+    let (argsA, argsB) = rHead args
+    res1 <- runEvent (Proxy :: Proxy a) argsA
+    res2 <- runEvent (Proxy :: Proxy b) argsB
+    return (res1, res2)
+-}
+rHead :: V.Rec V.Identity (a ': xs) -> a
+rHead (ir V.:& _) = V.getIdentity ir
+
+app :: (AcidWorldBackend m ss, HasSegments ss (EventS "someMFunc"), HasSegments ss (EventS "someFFunc")) => m ss String
 app = do
   s <- issueEvent $ toEvent (Proxy :: Proxy ("someMFunc")) 3 False "asdfsdf"
   void $ issueEvent $ toEvent (Proxy :: Proxy ("someFFunc")) "I" "Really" "Do"
@@ -214,6 +233,5 @@ app = do
 
 littleTest :: (MonadIO m) => m String
 littleTest = do
-  let (u :: (AcidWorldBackendFS (ToFields '["Tups", "List"]) String)) = runAcidWorldUpdateStatePure app
-
+  let (u :: (AcidWorldBackendFS (ToFields '["Tups", "List"]) String)) =  app
   runAcidWorldBackendFS u
