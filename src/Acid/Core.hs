@@ -62,8 +62,8 @@ class (V.KnownField a, Segment (V.Fst a), SegmentS (V.Fst a) ~ (V.Snd a)) => Kno
 instance (V.KnownField a, Segment (V.Fst a), SegmentS (V.Fst a) ~ (V.Snd a)) => KnownSegmentField a
 
 
-class (Monad (m ss), V.AllFields ss, V.AllConstrained KnownSegmentField ss) => AcidWorldBackend m (ss :: [(Symbol, *)]) where
-  getState :: m ss (V.FieldRec ss)
+class (Monad (m ss), V.AllFields (ToFields ss), V.AllConstrained KnownSegmentField (ToFields ss)) => AcidWorldBackend m (ss :: [Symbol]) where
+  getState :: m ss (V.FieldRec (ToFields ss))
   runAcidWorldBackend :: (MonadIO n) => m ss a -> n a
 
 newtype AcidWorldBackendFS ss a = AcidWorldBackendFS (IO a)
@@ -84,9 +84,9 @@ runAcidWorldBackendFS = runAcidWorldBackend
 makeDefaultSegment :: forall a. KnownSegmentField a => V.ElField '(V.Fst a, (V.Snd a))
 makeDefaultSegment = (V.Label :: V.Label (V.Fst a)) V.=: (defaultState (Proxy :: Proxy (V.Fst a)))
 
-instance (V.AllFields ss,  V.AllConstrained KnownSegmentField ss) => AcidWorldBackend AcidWorldBackendFS ss where
+instance (V.AllFields (ToFields ss),  V.AllConstrained KnownSegmentField (ToFields ss)) => AcidWorldBackend AcidWorldBackendFS ss where
   getState = do
-    let (a :: V.FieldRec ss) = V.rpureConstrained (Proxy :: Proxy KnownSegmentField) makeDefaultSegment
+    let (a :: V.FieldRec (ToFields ss)) = V.rpureConstrained (Proxy :: Proxy KnownSegmentField) makeDefaultSegment
     return a
 
   runAcidWorldBackend (AcidWorldBackendFS m) = liftIO m
@@ -101,17 +101,18 @@ instance (V.HasField V.Rec s ss (SegmentS s), KnownSymbol s) => HasSegmentF ss s
 instance (V.AllConstrained (HasSegmentF state) ss) => HasSegments state ss
 -}
 type family HasSegments state ss :: Constraint where
-  HasSegments state ss = V.AllConstrained (HasSegmentF state) ss
+  HasSegments state ss = V.AllConstrained (HasSegmentF (ToFields state)) ss
+
 
 class (Monad (m ss)) => AcidWorldUpdate m ss where
-  getSegment :: (HasSegment s ss) =>  Proxy s -> m ss (SegmentS s)
-  putSegment :: (HasSegment s ss) =>  Proxy s -> (SegmentS s) -> m ss ()
+  getSegment :: (HasSegment s (ToFields ss)) =>  Proxy s -> m ss (SegmentS s)
+  putSegment :: (HasSegment s (ToFields ss)) =>  Proxy s -> (SegmentS s) -> m ss ()
   runUpdate :: (AcidWorldBackend n ss) => m ss a -> n ss a
 
 runAcidWorldUpdateStatePure :: (AcidWorldBackend m ss) => AcidWorldUpdateStatePure ss a -> m ss a
 runAcidWorldUpdateStatePure = runUpdate
 
-newtype AcidWorldUpdateStatePure ss a = AcidWorldUpdateStatePure (St.State (V.FieldRec ss) a)
+newtype AcidWorldUpdateStatePure ss a = AcidWorldUpdateStatePure (St.State (V.FieldRec (ToFields ss)) a)
   deriving (Functor, Applicative, Monad)
 
 
@@ -169,14 +170,14 @@ instance Segment "List" where
   defaultState _ = ["Hello", "I", "Work!"]
 
 
-someMFunc :: (AcidWorldUpdate m ss, HasSegment "Tups" ss) => Int -> Bool -> Text -> m ss String
+someMFunc :: (AcidWorldUpdate m ss, HasSegment "Tups" (ToFields ss)) => Int -> Bool -> Text -> m ss String
 someMFunc i b t = do
   tups <- getSegment (Proxy :: Proxy "Tups")
   let newTups = (tups ++ [(b, i)])
   putSegment (Proxy :: Proxy "Tups") newTups
   pure $ show t ++ show newTups
 
-someFFunc :: (AcidWorldUpdate m ss, HasSegment "List" ss) => String -> String -> String -> m ss ()
+someFFunc :: (AcidWorldUpdate m ss, HasSegment "List" (ToFields ss)) => String -> String -> String -> m ss ()
 someFFunc a b c = do
   ls <- getSegment (Proxy :: Proxy "List")
   let newLs = ls ++ [a, b, c]
@@ -233,5 +234,5 @@ app = do
 
 littleTest :: (MonadIO m) => m String
 littleTest = do
-  let (u :: (AcidWorldBackendFS (ToFields '["Tups", "List"]) String)) =  app
+  let (u :: (AcidWorldBackendFS '["Tups", "List"] String)) =  app
   runAcidWorldBackendFS u
