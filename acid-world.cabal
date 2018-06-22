@@ -16,6 +16,7 @@ library
     Acid.World
     Acid.Core
     Acid.Core.Segment
+    Acid.Core.Utils
   other-modules:
   build-depends:
     base,

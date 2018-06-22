@@ -24,80 +24,16 @@ import qualified Data.Aeson as Aeson
 import Data.Aeson(ToJSON(..), Value(..))
 
 import Acid.Core.Segment
+import Acid.Core.Utils
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-showSymbol :: (KnownSymbol a) => proxy a -> T.Text
-showSymbol p = T.pack $ symbolVal p
-
-
-
-type family Elem (a :: k) (b :: [k]) :: Bool where
-    Elem a '[] = 'False
-    Elem a (a ': xs) = 'True
-    Elem a (b ': xs) = Elem a xs
-
-class (Elem a b ~ 'True) => IsElem (a :: k) (b :: [k])
-instance  (Elem a b ~ 'True) => IsElem a b
-
-
-
-npToVinylRec :: (forall a. f a -> g a) -> NP f xs -> V.Rec g xs
-npToVinylRec _ Nil = V.RNil
-npToVinylRec f ((:*) a restNp) = f a V.:& (npToVinylRec f restNp)
-
-npIToVinylHList :: NP I xs -> V.HList xs
-npIToVinylHList np = npToVinylRec (V.Identity . unI) np
-
-
-
-class ToText (a :: k) where
-  toText :: Proxy a -> Text
-
-instance (KnownSymbol a) => ToText (a :: Symbol) where
-  toText = T.pack . symbolVal
-
-instance (ToJSON a) => ToJSON (V.Identity a) where
-  toJSON = toJSON . V.getIdentity
-
-instance ToJSON (Event n) where
-  toJSON (Event xs :: Event n) = Object $ HM.fromList [(toText (Proxy :: Proxy n), toJSON (recToJSON xs))]
-
-recToJSON :: forall xs. V.RecAll V.Identity xs ToJSON => V.HList xs -> Value
-recToJSON xs =
-  let (vs :: [Value]) = V.rfoldMap eachToJSON reifiedXs
-  in toJSON vs
-  where
-    reifiedXs :: V.Rec (V.Dict ToJSON V.:. V.Identity) xs
-    reifiedXs = V.reifyConstraint (Proxy :: Proxy ToJSON) xs
-    eachToJSON :: (V.Dict ToJSON V.:. V.Identity) x -> [Value]
-    eachToJSON (V.getCompose -> V.Dict a ) = [toJSON a]
-
-eventPath :: FilePath
-eventPath = "./event.json"
-
-
-
-
-
-
-class (IsElem n nn, Eventable n) => HasEvent nn n
-instance (IsElem n nn, Eventable n) => HasEvent nn n
-
-
+{-
+AcidWorldBackend
+-}
 class ( Monad (m ss nn)
-      , ValidSegmentNames ss) =>
+      , ValidSegmentNames ss
+      , ValidEventNames ss nn
+      ) =>
   AcidWorldBackend (m :: [Symbol] -> [Symbol] -> * -> *) (ss :: [Symbol]) (nn :: [Symbol]) where
   getState :: m ss nn (SegmentsState ss)
   runAcidWorldBackend :: (MonadIO n) => m ss nn a -> n a
@@ -106,13 +42,13 @@ class ( Monad (m ss nn)
   runWrappedEvent s (WrappedEvent e) = do
     (_, s') <- runUpdateEvent (Proxy :: Proxy (AcidWorldUpdateStatePure ss)) e s
     return s'
-  runEvents :: SegmentsState ss -> [WrappedEvent ss nn] -> m ss nn (SegmentsState ss)
-  runEvents s nn = foldM runWrappedEvent s nn
+  runWrappedEvents :: SegmentsState ss -> [WrappedEvent ss nn] -> m ss nn (SegmentsState ss)
+  runWrappedEvents s nn = foldM runWrappedEvent s nn
 
 
 
   saveEvent :: Event n -> m ss nn  ()
-  issueUpdateEvent :: (HasEvent nn n, HasSegments ss (EventS n)) => Event n -> m ss nn (EventResult n)
+  issueUpdateEvent :: (HasEvent nn n, HasSegments ss (EventSegments n)) => Event n -> m ss nn (EventResult n)
   issueUpdateEvent e = do
     s <- getState
     saveEvent e
@@ -122,25 +58,17 @@ class ( Monad (m ss nn)
 newtype AcidWorldBackendFS ss nn a = AcidWorldBackendFS (IO a)
   deriving (Functor, Applicative, Monad, MonadIO)
 
-runAcidWorldBackendFS :: (MonadIO m, AcidWorldBackend AcidWorldBackendFS ss nn) => AcidWorldBackendFS ss nn a -> m a
-runAcidWorldBackendFS = runAcidWorldBackend
 
-
-
-
-
-class (Eventable n, HasSegments ss (EventS n)) => ConstraintOnN ss n
-instance (Eventable n, HasSegments ss (EventS n)) => ConstraintOnN ss n
-
-
-instance (V.AllFields (ToSegmentFields ss),  V.AllConstrained KnownSegmentField (ToSegmentFields ss),  All (ConstraintOnN ss) nn) => AcidWorldBackend AcidWorldBackendFS ss nn where
+instance ( ValidSegmentNames ss
+         , ValidEventNames ss nn ) =>
+  AcidWorldBackend AcidWorldBackendFS ss nn where
 
   loadEvents = do
     bl <- BL.readFile eventPath
     case Aeson.eitherDecode' bl of
       Left err -> error err
       Right (v :: Value) -> do
-        pure $ cfoldMap_NP (Proxy :: Proxy (ConstraintOnN ss)) (\p -> decodeWrappedEvent v p) proxyRec
+        pure $ cfoldMap_NP (Proxy :: Proxy (ValidEventName ss)) (\p -> decodeWrappedEvent v p) proxyRec
 
     where
       proxyRec :: NP Proxy nn
@@ -149,20 +77,27 @@ instance (V.AllFields (ToSegmentFields ss),  V.AllConstrained KnownSegmentField 
   saveEvent e = BL.writeFile eventPath (Aeson.encode e)
 
   getState = do
-    let (a :: V.FieldRec (ToSegmentFields ss)) = V.rpureConstrained (Proxy :: Proxy KnownSegmentField) makeDefaultSegment
+    let defState = defaultSegmentsState (Proxy :: Proxy ss)
 
     es <- loadEvents
-    runEvents a es
+    runWrappedEvents defState es
 
   runAcidWorldBackend (AcidWorldBackendFS m) = liftIO m
 
+runAcidWorldBackendFS :: (MonadIO m, AcidWorldBackend AcidWorldBackendFS ss nn) => AcidWorldBackendFS ss nn a -> m a
+runAcidWorldBackendFS = runAcidWorldBackend
 
 
 
+{-
+AcidWorld Inner monad
+-}
 class (Monad (m ss)) => AcidWorldUpdate m ss where
-  getSegment :: (HasSegment (ToSegmentFields ss) s) =>  Proxy s -> m ss (SegmentS s)
-  putSegment :: (HasSegment (ToSegmentFields ss) s) =>  Proxy s -> (SegmentS s) -> m ss ()
-  runUpdateEvent :: (AcidWorldBackend b ss nn, HasSegments ss (EventS n)) => Proxy (m ss) -> Event n -> (SegmentsState ss) -> b ss nn (EventResult n, SegmentsState ss)
+  getSegment :: (HasSegment ss s) =>  Proxy s -> m ss (SegmentS s)
+  putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> m ss ()
+  runUpdateEvent :: ( AcidWorldBackend b ss nn
+                    , HasSegments ss (EventSegments n)) =>
+    Proxy (m ss) -> Event n -> (SegmentsState ss) -> b ss nn (EventResult n, SegmentsState ss)
 
 
 newtype AcidWorldUpdateStatePure ss a = AcidWorldUpdateStatePure (St.State (SegmentsState ss) a)
@@ -182,33 +117,40 @@ instance AcidWorldUpdate AcidWorldUpdateStatePure ss where
     return $ St.runState stm s
 
 
-type EventableR n xs r =
-  (Eventable n, EventArgs n ~ xs, EventResult n ~ r)
 
-class (ToText n, V.RecAll V.Identity (EventArgs n) ToJSON, SListI (EventArgs n), All Aeson.FromJSON (EventArgs n)) => Eventable (n :: k) where
-  type EventArgs n :: [*]
-  type EventResult n :: *
-  type EventS n :: [Symbol]
-  runEvent :: (AcidWorldUpdate m ss, HasSegments ss (EventS n)) => Proxy n -> V.HList (EventArgs n) -> m ss (EventResult n)
+{- EVENTS -}
 
 
 
-data Event (n :: k) where
-  Event :: (Eventable n, EventArgs n ~ xs) => V.HList xs -> Event n
+class ToUniqueText (a :: k) where
+  toUniqueText :: Proxy a -> Text
+
+instance (KnownSymbol a) => ToUniqueText (a :: Symbol) where
+  toUniqueText = T.pack . symbolVal
 
 
-data WrappedEvent ss nn where
-  WrappedEvent :: (HasSegments ss (EventS n)) => Event n -> WrappedEvent ss nn
 
-toEvent :: forall n xs r. (V.RecordCurry xs, EventableR n xs r) => Proxy n -> V.Curried (xs ) (Event n)
-toEvent _  = V.rcurry' (Event :: V.Rec V.Identity xs -> Event n)
+instance (ToJSON a) => ToJSON (V.Identity a) where
+  toJSON = toJSON . V.getIdentity
 
+instance ToJSON (Event n) where
+  toJSON (Event xs :: Event n) = Object $ HM.fromList [(toUniqueText (Proxy :: Proxy n), toJSON (recToJSON xs))]
+
+recToJSON :: forall xs. V.RecAll V.Identity xs ToJSON => V.HList xs -> Value
+recToJSON xs =
+  let (vs :: [Value]) = V.rfoldMap eachToJSON reifiedXs
+  in toJSON vs
+  where
+    reifiedXs :: V.Rec (V.Dict ToJSON V.:. V.Identity) xs
+    reifiedXs = V.reifyConstraint (Proxy :: Proxy ToJSON) xs
+    eachToJSON :: (V.Dict ToJSON V.:. V.Identity) x -> [Value]
+    eachToJSON (V.getCompose -> V.Dict a ) = [toJSON a]
 
 data ValueHolder a = ValueHolder (Proxy a, Value)
 
-decodeWrappedEvent :: forall n ss nn xs. (ConstraintOnN ss n, EventArgs n ~ xs) =>  Value -> Proxy n -> [WrappedEvent ss nn]
+decodeWrappedEvent :: forall n ss nn xs. (ValidEventName ss n, EventArgs n ~ xs) =>  Value -> Proxy n -> [WrappedEvent ss nn]
 decodeWrappedEvent (Object hm) p =
-  case HM.lookup (toText p) hm of
+  case HM.lookup (toUniqueText p) hm of
     Nothing -> []
     Just (Array v) -> [WrappedEvent $ ((Event $ toHList (V.toList v)) :: Event n)]
     _ -> error "Expected to get an array"
@@ -234,6 +176,52 @@ decodeWrappedEvent (Object hm) p =
 decodeWrappedEvent _ _ = error "Expected object"
 
 
+eventPath :: FilePath
+eventPath = "./event.json"
+
+
+
+
+
+
+class (IsElem n nn, Eventable n) => HasEvent nn n
+instance (IsElem n nn, Eventable n) => HasEvent nn n
+
+class (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss n
+instance (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss n
+
+type ValidEventNames ss nn = All (ValidEventName ss) nn
+
+
+
+
+
+-- representing the relationship between n xs and r
+type EventableR n xs r =
+  (Eventable n, EventArgs n ~ xs, EventResult n ~ r)
+
+
+class (ToUniqueText n, V.RecAll V.Identity (EventArgs n) ToJSON, SListI (EventArgs n), All Aeson.FromJSON (EventArgs n)) => Eventable (n :: k) where
+  type EventArgs n :: [*]
+  type EventResult n :: *
+  type EventSegments n :: [Symbol]
+  runEvent :: (AcidWorldUpdate m ss, HasSegments ss (EventSegments n)) => Proxy n -> V.HList (EventArgs n) -> m ss (EventResult n)
+
+data Event (n :: k) where
+  Event :: (Eventable n, EventArgs n ~ xs) => V.HList xs -> Event n
+
+mkEvent :: forall n xs r. (V.RecordCurry xs, EventableR n xs r) => Proxy n -> V.Curried (xs ) (Event n)
+mkEvent _  = V.rcurry' (Event :: V.HList xs -> Event n)
+
+data WrappedEvent ss nn where
+  WrappedEvent :: (HasSegments ss (EventSegments n)) => Event n -> WrappedEvent ss nn
+
+
+
+
+
+
+
 
 {- TEST CODE (will move later)-}
 
@@ -249,14 +237,14 @@ instance Segment "List" where
   defaultState _ = ["Hello", "I", "Work!"]
 
 
-someMFunc :: (AcidWorldUpdate m ss, HasSegment (ToSegmentFields ss)  "Tups" ) => Int -> Bool -> Text -> m ss String
+someMFunc :: (AcidWorldUpdate m ss, HasSegment ss  "Tups" ) => Int -> Bool -> Text -> m ss String
 someMFunc i b t = do
   tups <- getSegment (Proxy :: Proxy "Tups")
   let newTups = (tups ++ [(b, i)])
   putSegment (Proxy :: Proxy "Tups") newTups
   pure $ show t ++ show newTups
 
-someFFunc :: (AcidWorldUpdate m ss, HasSegment (ToSegmentFields ss)  "List") => String -> String -> String -> m ss [String]
+someFFunc :: (AcidWorldUpdate m ss, HasSegment ss  "List") => String -> String -> String -> m ss [String]
 someFFunc a b c = do
   ls <- getSegment (Proxy :: Proxy "List")
   let newLs = ls ++ [a, b, c]
@@ -267,19 +255,19 @@ someFFunc a b c = do
 instance Eventable "someMFunc" where
   type EventArgs "someMFunc" = '[Int, Bool, Text]
   type EventResult "someMFunc" = String
-  type EventS "someMFunc" = '["Tups"]
+  type EventSegments "someMFunc" = '["Tups"]
   runEvent _ = V.runcurry' someMFunc
 
 instance Eventable "someFFunc" where
   type EventArgs "someFFunc" = '[String, String, String]
   type EventResult "someFFunc" = [String]
-  type EventS "someFFunc" = '["List"]
+  type EventSegments "someFFunc" = '["List"]
   runEvent _ = V.runcurry' someFFunc
 
 instance Eventable "returnListState" where
   type EventArgs "returnListState" = '[]
   type EventResult "returnListState" = [String]
-  type EventS "returnListState" = '["List", "Tups"]
+  type EventSegments "returnListState" = '["List", "Tups"]
   runEvent _ _ =  do
     t <- getSegment (Proxy :: Proxy "Tups")
     l <- getSegment (Proxy :: Proxy "List")
@@ -289,7 +277,9 @@ type family Union (a :: [k]) (b :: [k]) = (res :: [k]) where
   Union '[] b = b
   Union (a ': xs) b = a ': Union xs b
 
-{-instance (Eventable a, Eventable b) => Eventable (a, b) where
+{-
+ attempt at composing events
+instance (Eventable a, Eventable b) => Eventable (a, b) where
   type EventArgs (a, b) = '[(V.HList (EventArgs a), V.HList (EventArgs b))]
   type EventResult (a, b) = (EventResult a, EventResult b)
   type EventS (a, b) = (EventS a) V.++ (EventS b)
@@ -299,14 +289,15 @@ type family Union (a :: [k]) (b :: [k]) = (res :: [k]) where
     res1 <- runEvent (Proxy :: Proxy a) argsA
     res2 <- runEvent (Proxy :: Proxy b) argsB
     return (res1, res2)
--}
-rHead :: V.Rec V.Identity (a ': xs) -> a
-rHead (ir V.:& _) = V.getIdentity ir
+  rHead :: V.Rec V.Identity (a ': xs) -> a
+  rHead (ir V.:& _) = V.getIdentity ir
 
-app :: (AcidWorldBackend m ss nn, HasEvent nn "someFFunc",  HasSegments ss (EventS "someFFunc")) => m ss nn String
+-}
+
+app :: (AcidWorldBackend m ss nn, HasEvent nn "someFFunc",  HasSegments ss (EventSegments "someFFunc")) => m ss nn String
 app = do
   --s <- issueUpdateEvent $ toEvent (Proxy :: Proxy ("someMFunc")) 3 False "asdfsdf"
-  s <- issueUpdateEvent $ toEvent (Proxy :: Proxy ("someFFunc")) "I" "Really" "Do"
+  s <- issueUpdateEvent $ mkEvent (Proxy :: Proxy ("someFFunc")) "I" "Really" "Do"
   -- s <- issueUpdateEvent $ toEvent (Proxy :: Proxy ("returnListState"))
   return $ show s
 
