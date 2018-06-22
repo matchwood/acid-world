@@ -25,7 +25,8 @@ library
     HList,
     mtl,
     vinyl,
-    aeson
+    aeson,
+    stm
 
   hs-source-dirs:      src
   ghc-options:         -Wall
