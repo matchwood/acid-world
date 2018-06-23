@@ -26,7 +26,9 @@ library
     mtl,
     vinyl,
     aeson,
-    stm
+    stm,
+    uuid
+
 
   hs-source-dirs:      src
   ghc-options:         -Wall
@@ -82,6 +84,7 @@ test-suite acid-world-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
   main-is:             Test.hs
+  other-modules:        TH
   ghc-options:         -Wall
                        -Wcompat
                        -Wincomplete-record-updates
@@ -92,7 +95,12 @@ test-suite acid-world-test
                        -rtsopts
                        -with-rtsopts=-N
   build-depends:       rio
+                     , base
                      , acid-world
+                     , QuickCheck
+                     , criterion
+                     , template-haskell
+                     , aeson
   default-language:    Haskell2010
   default-extensions:  AutoDeriveTypeable
                        BangPatterns
@@ -135,7 +143,8 @@ test-suite acid-world-test
                        TypeOperators
                        TypeSynonymInstances
                        ViewPatterns
-
+  ghc-options:
+    -O2
 
 source-repository head
   type:     git
