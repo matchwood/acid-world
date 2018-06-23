@@ -1,6 +1,5 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
-{-# OPTIONS_GHC -fno-warn-orphans#-}
 
 module Acid.Core where
 import RIO
@@ -8,7 +7,7 @@ import qualified RIO.Directory as Dir
 import qualified  RIO.HashMap as HM
 import qualified  RIO.Text as T
 import qualified  RIO.ByteString.Lazy as BL
---import qualified  RIO.Vector as V
+import qualified  RIO.Vector as V
 import qualified  RIO.Time as Time
 
 import Control.Arrow (left)
@@ -18,9 +17,6 @@ import GHC.TypeLits
 import qualified Control.Monad.State.Strict as St
 
 import qualified  Data.Vinyl as V
-import qualified  Data.Vinyl.TypeLevel as V
-import qualified  Data.Vinyl.Curry as V
-import qualified  Data.Vinyl.Functor as V
 
 
 import qualified Data.Aeson as Aeson
@@ -90,15 +86,12 @@ class ( Monad (m ss nn)
   handleUpdateEvent :: (IsValidEvent ss nn n, MonadIO z, AcidWorldUpdate u ss) => (AWBState m ss nn) -> (AWUState u ss) -> Event n -> z (EventResult n)
 
 
-{-  handleUpdateEvent e = do
-    s <- getState
-    saveEvent e
-    (a, _) <- runUpdateEvent (Proxy :: Proxy (AcidWorldUpdateStatePure ss)) e s
-    return a-}
-
 newtype AcidWorldBackendFS ss nn a = AcidWorldBackendFS (IO a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadThrow)
 
+
+eventPath :: FilePath
+eventPath = "./event.json"
 
 instance ( ValidSegmentNames ss
          , ValidEventNames ss nn ) =>
@@ -192,12 +185,6 @@ instance AcidWorldUpdate AcidWorldUpdateStatePure ss where
       STM.writeTVar (aWUStateStatePure awuState) s'
       return a
 
-{-
-  runUpdateEvent (Proxy :: Proxy (AcidWorldUpdateStatePure ss)) (Event xs :: Event n) s = do
-    let (AcidWorldUpdateStatePure stm :: AcidWorldUpdateStatePure ss (EventResult n)) = runEvent (Proxy :: Proxy n) xs
-    return $ St.runState stm s
-
--}
 
 {- EVENTS -}
 
@@ -210,9 +197,6 @@ instance (KnownSymbol a) => ToUniqueText (a :: Symbol) where
   toUniqueText = T.pack . symbolVal
 
 
-
-eventPath :: FilePath
-eventPath = "./event.json"
 
 
 
@@ -237,20 +221,25 @@ type EventableR n xs r =
   (Eventable n, EventArgs n ~ xs, EventResult n ~ r)
 
 
-class (ToUniqueText n, V.RecAll V.Identity (EventArgs n) ToJSON, SListI (EventArgs n), All Aeson.FromJSON (EventArgs n)) => Eventable (n :: k) where
+class (ToUniqueText n, All ToJSON (EventArgs n) , SListI (EventArgs n), All Aeson.FromJSON (EventArgs n)) => Eventable (n :: k) where
   type EventArgs n :: [*]
   type EventResult n :: *
   type EventSegments n :: [Symbol]
-  runEvent :: (AcidWorldUpdate m ss, HasSegments ss (EventSegments n)) => Proxy n -> V.HList (EventArgs n) -> m ss (EventResult n)
+  runEvent :: (AcidWorldUpdate m ss, HasSegments ss (EventSegments n)) => Proxy n -> EventArgsContainer (EventArgs n) -> m ss (EventResult n)
 
-toRunEvent :: V.Curried ts a -> V.Rec V.Identity ts -> a
-toRunEvent = V.runcurry'
+
+
+
+newtype EventArgsContainer xs = EventArgsContainer {eventArgsContainerNp ::  NP I xs}
 
 data Event (n :: k) where
-  Event :: (Eventable n, EventArgs n ~ xs) => V.HList xs -> Event n
+  Event :: (Eventable n, EventArgs n ~ xs) => EventArgsContainer xs -> Event n
 
-mkEvent :: forall n xs r. (V.RecordCurry xs, EventableR n xs r) => Proxy n -> V.Curried (xs ) (Event n)
-mkEvent _  = V.rcurry' (Event :: V.HList xs -> Event n)
+toRunEvent :: NPCurried ts a -> EventArgsContainer ts -> a
+toRunEvent f  = npIUncurry f . eventArgsContainerNp
+
+mkEvent :: forall n xs r. (NPCurry xs, EventableR n xs r) => Proxy n -> NPCurried xs (Event n)
+mkEvent _  = npICurry (Event . EventArgsContainer :: NP I xs -> Event n)
 
 data WrappedEvent ss nn where
   WrappedEvent :: (HasSegments ss (EventSegments n)) => {
@@ -267,27 +256,40 @@ mkWrappedEvent e = do
 
 
 
--- @todo remove this orphan (probably by changing this code to use NP rather than Vinyl)
-instance (ToJSON a) => ToJSON (V.Identity a) where
-  toJSON = toJSON . V.getIdentity
-
 instance ToJSON (WrappedEvent ss nn) where
   toJSON (WrappedEvent t ui (Event xs :: Event n)) = Object $ HM.fromList [
     ("eventName", toJSON (toUniqueText (Proxy :: Proxy n))),
     ("eventTime", toJSON t),
     ("eventId", toJSON ui),
-    ("eventArgs", recToJSON xs)]
+    ("eventArgs", toJSON xs)]
 
-recToJSON :: forall xs. V.RecAll V.Identity xs ToJSON => V.HList xs -> Value
-recToJSON xs =
-  let (vs :: [Value]) = V.rfoldMap eachToJSON reifiedXs
-  in toJSON vs
-  where
-    reifiedXs :: V.Rec (V.Dict ToJSON V.:. V.Identity) xs
-    reifiedXs = V.reifyConstraint (Proxy :: Proxy ToJSON) xs
-    eachToJSON :: (V.Dict ToJSON V.:. V.Identity) x -> [Value]
-    eachToJSON (V.getCompose -> V.Dict a ) = [toJSON a]
+instance (All ToJSON xs) => ToJSON (EventArgsContainer xs) where
+  toJSON (EventArgsContainer np) =
+    toJSON $ collapse_NP $ cmap_NP (Proxy :: Proxy ToJSON) (K . toJSON . unI) np
 
+
+instance (ValidEventName ss n, EventArgs n ~ xs) => Aeson.FromJSON (WrappedEventT ss nn n) where
+  parseJSON = Aeson.withObject "WrappedEventT" $ \o -> do
+    t <- o Aeson..: "eventTime"
+    uid <- o Aeson..: "eventId"
+    args <- o Aeson..: "eventArgs"
+    return $ WrappedEventT (WrappedEvent t uid ((Event args) :: Event n))
+
+instance (All Aeson.FromJSON xs) => Aeson.FromJSON (EventArgsContainer xs) where
+  parseJSON = Aeson.withArray "EventArgsContainer" $ \v -> fmap EventArgsContainer $ constructFromJson_NP (V.toList v)
+
+constructFromJson_NP :: forall xs. (All Aeson.FromJSON xs) => [Value] -> Aeson.Parser (NP I xs)
+constructFromJson_NP [] =
+  case sList :: SList xs of
+    SNil   -> pure Nil
+    SCons  -> fail "No values left but still expecting a type"
+constructFromJson_NP (v:vs) =
+  case sList :: SList xs of
+    SNil   -> fail "More values than expected"
+    SCons -> do
+      r <- constructFromJson_NP vs
+      a <- Aeson.parseJSON v
+      pure $ I a :* r
 
 
 
@@ -337,42 +339,6 @@ decodeWrappedEvent :: forall n ss nn. (ValidEventName ss n) => Proxy n -> Object
 decodeWrappedEvent _ hm = do
   ((WrappedEventT wr) :: (WrappedEventT ss nn n))  <- fromJSONEither (Object hm)
   pure $ wr
-
-instance (ValidEventName ss n, EventArgs n ~ xs) => Aeson.FromJSON (WrappedEventT ss nn n) where
-  parseJSON = Aeson.withObject "WrappedEventT" $ \o -> do
-    t <- o Aeson..: "eventTime"
-    uid <- o Aeson..: "eventId"
-    argVals <- o Aeson..: "eventArgs"
-    {-npV <- npValues argVals
-    let zipped = zipWith_NP (\_ v -> ValueT (unK v))  (pure_NP Proxy) npV
-    npXs <- sequence_NP $ cmap_NP (Proxy :: Proxy Aeson.FromJSON) argToJSON zipped
--}
-    npXs <- constructFromJson_NP argVals
-    return $ WrappedEventT (WrappedEvent t uid ((Event $ npIToVinylHList npXs) :: Event n))
-{-    where
-      argToJSON :: (Aeson.FromJSON a) => ValueT a -> Aeson.Parser a
-      argToJSON (ValueT v) = Aeson.parseJSON v
-      npValues :: [Value] -> Aeson.Parser (NP (K Value) xs)
-      npValues vs =
-        case Generics.SOP.NP.fromList vs of
-          Nothing -> fail $ "Expected to find a list that matched the number of argument xs, but got: " ++ (show vs)
-          Just np -> pure np
--}
-constructFromJson_NP :: forall xs. (All Aeson.FromJSON xs) => [Value] -> Aeson.Parser (NP I xs)
-constructFromJson_NP [] =
-  case sList :: SList xs of
-    SNil   -> pure Nil
-    SCons  -> fail "No values left but still expecting a type"
-
-constructFromJson_NP (v:vs) =
-  case sList :: SList xs of
-    SNil   -> fail "More values than expected"
-    SCons -> do
-      r <- constructFromJson_NP vs
-      a <- Aeson.parseJSON v
-      pure $ I a :* r
-
-    --f :* pure_NP f
 
 
 
