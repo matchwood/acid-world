@@ -101,6 +101,7 @@ test-suite acid-world-test
                      , criterion
                      , template-haskell
                      , aeson
+                     , temporary
   default-language:    Haskell2010
   default-extensions:  AutoDeriveTypeable
                        BangPatterns

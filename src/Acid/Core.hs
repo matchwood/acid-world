@@ -8,6 +8,7 @@ import qualified  RIO.HashMap as HM
 import qualified  RIO.Text as T
 import qualified  RIO.ByteString.Lazy as BL
 import qualified  RIO.Vector as V
+import qualified  RIO.Vector.Boxed as VB
 import qualified  RIO.Time as Time
 
 import Control.Arrow (left)
@@ -42,8 +43,8 @@ data AcidWorld  ss nn where
                  AcidWorldBackend bMonad ss nn
                , AcidWorldUpdate uMonad ss
                ) => {
-    acidWorldBackendMonad :: Proxy bMonad,
-    acidWorldUpdateMonad :: Proxy uMonad,
+    acidWorldBackendConfig :: AWBConfig bMonad ss nn,
+    acidWorldUpdateMonadConfig :: AWUConfig uMonad ss,
     acidWorldBackendInitState :: AWBState bMonad ss nn,
     acidWorldUpdateMonadInitState :: AWUState uMonad ss
     } -> AcidWorld ss nn
@@ -51,18 +52,32 @@ data AcidWorld  ss nn where
 
 openAcidWorld :: forall m ss nn bMonad uMonad.
                ( MonadIO m
-
+               , MonadThrow m
                , AcidWorldBackend bMonad ss nn
                , AcidWorldUpdate uMonad ss
-               ) => Maybe (SegmentsState ss) -> Proxy bMonad -> Proxy uMonad ->  m (AcidWorld ss nn)
-openAcidWorld mDefSt acidWorldBackendMonad acidWorldUpdateMonad = do
+               ) => Maybe (SegmentsState ss) -> AWBConfig bMonad ss nn -> AWUConfig uMonad ss ->  m (AcidWorld ss nn)
+openAcidWorld mDefSt acidWorldBackendConfig acidWorldUpdateMonadConfig = do
   let defState = fromMaybe (defaultSegmentsState (Proxy :: Proxy ss)) mDefSt
-  (acidWorldBackendInitState, acidWorldUpdateMonadInitState) <- initialise acidWorldUpdateMonad defState
+  (acidWorldBackendInitState) <- initialise acidWorldBackendConfig defState
+
+
+  let handles = BackendHandles {
+          bhLoadEvents = loadEvents acidWorldBackendInitState,
+          bhGetLastCheckpointState = getLastCheckpointState acidWorldBackendInitState
+        }
+
+  (acidWorldUpdateMonadInitState) <- initialiseUpdate acidWorldUpdateMonadConfig handles defState
+
   return $ AcidWorld{..}
 
 
 update :: (IsValidEvent ss nn n, MonadIO m) => AcidWorld ss nn -> Event n -> m (EventResult n)
 update (AcidWorld {..}) = handleUpdateEvent acidWorldBackendInitState acidWorldUpdateMonadInitState
+
+data BackendHandles m ss nn = BackendHandles {
+    bhLoadEvents :: MonadIO m => m (Either Text (VB.Vector (WrappedEvent ss nn))),
+    bhGetLastCheckpointState :: MonadIO m => m (Maybe (SegmentsState ss))
+  }
 
 {-
 AcidWorldBackend
@@ -75,33 +90,38 @@ class ( Monad (m ss nn)
       ) =>
   AcidWorldBackend (m :: [Symbol] -> [Symbol] -> * -> *) (ss :: [Symbol]) (nn :: [Symbol]) where
   data AWBState m ss nn
-  initialise :: (MonadIO z, AcidWorldUpdate uMonad ss) => (Proxy uMonad) -> (SegmentsState ss) -> z (AWBState m ss nn, AWUState uMonad ss)
+  data AWBConfig m ss nn
+  initialise :: (MonadIO z) => AWBConfig m ss nn -> (SegmentsState ss) -> z (AWBState m ss nn)
   -- should return the most recent checkpoint state, if any
-  getLastCheckpointState :: m ss nn (Maybe (SegmentsState ss))
-  getLastCheckpointState = pure Nothing
+  getLastCheckpointState :: (MonadIO z) => AWBState m ss nn -> z (Maybe (SegmentsState ss))
+  getLastCheckpointState _ = pure Nothing
   -- return events since the last checkpoint, if any
-  loadEvents :: m ss nn (Either Text [WrappedEvent ss nn])
-  loadEvents = pure . pure $ []
-  persistEvent :: (MonadIO z, IsValidEvent ss nn n) => (AWBState m ss nn) -> Event n -> z ()
+  loadEvents :: (MonadIO z) =>  AWBState m ss nn -> z (Either Text (VB.Vector (WrappedEvent ss nn)))
+  loadEvents _ = pure . pure $ VB.empty
   handleUpdateEvent :: (IsValidEvent ss nn n, MonadIO z, AcidWorldUpdate u ss) => (AWBState m ss nn) -> (AWUState u ss) -> Event n -> z (EventResult n)
-
 
 newtype AcidWorldBackendFS ss nn a = AcidWorldBackendFS (IO a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadThrow)
 
 
-eventPath :: FilePath
-eventPath = "./event.json"
+
+
 
 instance ( ValidSegmentNames ss
          , ValidEventNames ss nn ) =>
   AcidWorldBackend AcidWorldBackendFS ss nn where
-  data AWBState AcidWorldBackendFS ss nn = AWBStateBackendFS
-  initialise (Proxy :: Proxy uMonad) defState = do
-    let (AcidWorldBackendFS m :: AcidWorldBackendFS ss nn (AWUState uMonad ss)) = initialiseUpdate defState
-    uState <- liftIO m
-    pure (AWBStateBackendFS, uState)
-  loadEvents = do
+  data AWBState AcidWorldBackendFS ss nn = AWBStateBackendFS {
+    sWBStateBackendConfig :: AWBConfig AcidWorldBackendFS ss nn
+  }
+  data AWBConfig AcidWorldBackendFS ss nn = AWBConfigBackendFS {
+    aWBConfigBackendFSStateDir :: FilePath
+  }
+  initialise c _  = do
+    stateP <- Dir.makeAbsolute (aWBConfigBackendFSStateDir c)
+    Dir.createDirectoryIfMissing True stateP
+    pure $ AWBStateBackendFS c{aWBConfigBackendFSStateDir = stateP}
+  loadEvents s = do
+    let eventPath = makeEventPath (aWBConfigBackendFSStateDir . sWBStateBackendConfig $ s)
     let ps = makeParsers
     bl <- do
       b <- Dir.doesFileExist eventPath
@@ -111,40 +131,41 @@ instance ( ValidSegmentNames ss
 
     case decodeToTaggedObjects bl of
       Left err -> pure $ Left err
-      Right vs -> pure $ sequence $ map (extractWrappedEvent ps) vs
-
-
-
-
-  persistEvent _ e = do
+      Right vs -> pure $ sequence $ VB.map (extractWrappedEvent ps) vs
+  -- this should be bracketed and so forth @todo
+  handleUpdateEvent awb awu (e :: Event n) = do
+    let eventPath = makeEventPath (aWBConfigBackendFSStateDir . sWBStateBackendConfig $ awb)
     (wr :: WrappedEvent ss nn) <- mkWrappedEvent e
     b <- Dir.doesFileExist eventPath
     when (not b) (BL.writeFile eventPath "")
     BL.appendFile eventPath (Aeson.encode wr <> "\n")
 
-  -- this should be bracketed and so forth @todo
-  handleUpdateEvent awb awu (e :: Event n) = do
-    persistEvent awb e
     let (AcidWorldBackendFS m :: AcidWorldBackendFS ss nn (EventResult n)) = runUpdateEvent awu e
     liftIO $ m
 
-
+makeEventPath :: FilePath -> FilePath
+makeEventPath fp = fp <> "/" <> "events.json"
 
 
 
 {-
 AcidWorld Inner monad
 -}
+
+runWrappedEvent :: AcidWorldUpdate m ss => WrappedEvent ss e -> m ss ()
+
+runWrappedEvent (WrappedEvent _ _ (Event xs :: Event n)) = void $ runEvent (Proxy :: Proxy n) xs
+
 class (Monad (m ss)) => AcidWorldUpdate m ss where
   data AWUState m ss
-  initialiseUpdate :: AcidWorldBackend b ss nn => (SegmentsState ss) -> b ss nn (AWUState m ss)
+  data AWUConfig m ss
+  initialiseUpdate :: (MonadIO z, MonadThrow z) => AWUConfig m ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (AWUState m ss)
   getSegment :: (HasSegment ss s) =>  Proxy s -> m ss (SegmentS s)
   putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> m ss ()
-  runWrappedEvent :: WrappedEvent ss e -> m ss ()
-  runWrappedEvent (WrappedEvent _ _ (Event xs :: Event n)) = void $ runEvent (Proxy :: Proxy n) xs
-  runUpdateEvent :: ( AcidWorldBackend b ss nn
-                    , HasSegments ss (EventSegments n)) =>
-    AWUState m ss -> Event n -> b ss nn (EventResult n)
+
+  runUpdateEvent :: ( ValidEventName ss n
+                    , MonadIO z) =>
+    AWUState m ss -> Event n -> z (EventResult n)
 
 
 newtype AcidWorldUpdateStatePure ss a = AcidWorldUpdateStatePure (St.State (SegmentsState ss) a)
@@ -159,11 +180,12 @@ instance AcidWorldUpdate AcidWorldUpdateStatePure ss where
   data AWUState AcidWorldUpdateStatePure ss = AWUStateStatePure {
       aWUStateStatePure :: TVar (SegmentsState ss)
     }
-  initialiseUpdate defState = do
-    mCpState <- getLastCheckpointState
+  data AWUConfig AcidWorldUpdateStatePure ss = AWUConfigStatePure
+  initialiseUpdate _ (BackendHandles{..}) defState = do
+    mCpState <- bhGetLastCheckpointState
     let startState = fromMaybe defState mCpState
     events <- do
-      errEs <- loadEvents
+      errEs <- bhLoadEvents
       case errEs of
         Left err -> throwM $ AcidWorldInitialisationE err
         Right es -> pure es
@@ -207,7 +229,7 @@ instance (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsVa
 
 
 
-class (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss n
+class (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss (n :: Symbol)
 instance (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss n
 
 type ValidEventNames ss nn = All (ValidEventName ss) nn
@@ -316,9 +338,9 @@ fromJSONEither v =
     (Aeson.Success a) -> pure a
     (Aeson.Error e) -> fail e
 
-decodeToTaggedObjects :: BL.ByteString -> Either Text [(Object, Text)]
+decodeToTaggedObjects :: BL.ByteString -> Either Text (VB.Vector (Object, Text))
 decodeToTaggedObjects bl = do
-  let bs = filter (not . BL.null) $ BL.split 10 bl
+  let bs = VB.filter (not . BL.null) $ VB.fromList $ BL.split 10 bl
   sequence . sequence $ mapM decodeToTaggedValue bs
 
 decodeToTaggedValue :: BL.ByteString -> Either Text (Object, Text)

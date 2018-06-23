@@ -11,7 +11,7 @@
 *~
 *.sass-cache
 *.directory
-
+tmp/*
 # OS or Editor folders
 .stack-work
 *.stack-work

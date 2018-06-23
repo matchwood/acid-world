@@ -13,16 +13,14 @@ import Test.QuickCheck.Arbitrary
 import Test.QuickCheck as QC
 import Criterion.Main
 import Criterion.Types
-import TH
-import qualified  RIO.ByteString.Lazy as BL
-import Data.Aeson( Object)
-generateEventables (eventableNames 100)
+import qualified System.IO.Temp as Temp
 
+-- generateEventables (eventableNames 100)
+topLevelTestDir :: FilePath
+topLevelTestDir = "./tmp"
 
-instance NFData (WrappedEvent nn ss) where
-  rnf (WrappedEvent a b c) = rnf (a,b,c)
-instance NFData (Event n) where
-  rnf (Event _) = ()
+instance NFData (AcidWorld a n) where
+  rnf _ = ()
 
 main :: IO ()
 main = do
@@ -35,16 +33,10 @@ main = do
 
   withLogFunc logOptions' $ \lf -> do
     defaultMainWith conf [
-
-      env (loadValues) $ \vs -> bgroup "WithValues" [
-        bench "extractWrappedEvents1" (nf extractWrappedEvents1 vs),
-        bench "extractWrappedEvents2" (nf extractWrappedEvents2 vs)
-        ]
-
+       env generateStrings $ \ls -> bench "insert100k" $ perRunEnv (openMyAcidWorldInTempDir) $ \aw -> runRIO lf (insert100k aw ls)
 {-      bench  "fetchList" (perRunEnv (Dir.copyFile (eventPath <> ".orig") eventPath) (const $ runRIO lf fetchList)),
       bench  "fetchListWithManyEventNames" (perRunEnv (Dir.copyFile (eventPath <> ".orig") eventPath) (const $ runRIO lf fetchListWithManyEventNames)),
       bench  "fetchListWithManyEventNamesInverted" (perRunEnv (Dir.copyFile (eventPath <> ".orig") eventPath) (const $ runRIO lf fetchListWithManyEventNamesInverted))-}
-
 
       ]
 
@@ -77,74 +69,29 @@ instance Eventable "getListState" where
   runEvent _ _ = fmap (take 10) $ getSegment (Proxy :: Proxy "List")
 
 
-openMyAcidWorld :: (MonadIO m) => m (AcidWorld '["List"] '["prependToList", "getListState"])
-openMyAcidWorld = openAcidWorld Nothing (Proxy :: Proxy AcidWorldBackendFS) (Proxy :: Proxy AcidWorldUpdateStatePure)
 
-loadValues :: IO [BL.ByteString]
-loadValues = do
-  Dir.copyFile (eventPath <> ".orig") eventPath
-  bl <- BL.readFile eventPath
-  return $ filter (not . BL.null) $ BL.split 10 bl
+generateStrings :: IO [String]
+generateStrings = sequence $ replicate 100000 (QC.generate arbitrary)
 
 
-extractWrappedEvents ::(ValidEventNames ss nn) => [(Object, Text)] -> [WrappedEvent ss nn]
-extractWrappedEvents vs = do
-  let ps = makeParsers
-  case sequence $ map (extractWrappedEvent ps) vs of
-    Left err -> error $ show err
-    Right ws -> ws
-
-extractWrappedEvents1 :: [BL.ByteString] -> [WrappedEvent '["List"] '["prependToList", "getListState"]]
-extractWrappedEvents1 bs =
-  case sequence . sequence $ mapM decodeToTaggedValue bs of
-    Left err -> error $ show err
-    Right ws -> extractWrappedEvents ws
-
-extractWrappedEvents2 :: [BL.ByteString]  -> [WrappedEvent '["List"] (Union GeneratedEventNames '["prependToList", "getListState"]  )]
-extractWrappedEvents2 bs =
-  case sequence . sequence $ mapM decodeToTaggedValue bs of
-    Left err -> error $ show err
-    Right ws -> extractWrappedEvents ws
+openMyAcidWorldInTempDir :: IO (AcidWorld '["List"] '["prependToList", "getListState"])
+openMyAcidWorldInTempDir = do
+  tmpP <- Dir.makeAbsolute topLevelTestDir
+  Dir.createDirectoryIfMissing True tmpP
+  tmpDir <- Temp.createTempDirectory tmpP "test"
+  openAcidWorld Nothing (AWBConfigBackendFS tmpDir) AWUConfigStatePure
 
 
-
-insert100k :: (HasLogFunc env) => RIO env ()
-insert100k = do
-  aw <- openMyAcidWorld
-  ls <- liftIO $ sequence $ replicate 100000 (QC.generate arbitrary)
-
+insert100k :: AcidWorld '["List"] '["prependToList", "getListState"] -> [String] -> RIO env [String]
+insert100k aw ls = do
   mapM_ (\l -> update aw (mkEvent (Proxy :: Proxy ("prependToList")) l)) ls
-
-  res <- update aw (mkEvent (Proxy :: Proxy ("prependToList")) "Last in")
-
-  logInfo $ displayShow res
+  update aw (mkEvent (Proxy :: Proxy ("prependToList")) "Last in")
 
 
-fetchList :: (HasLogFunc env) => RIO env [String]
+{-fetchList :: (HasLogFunc env) => RIO env [String]
 fetchList = do
-
   aw <- openMyAcidWorld
   res <- update aw (mkEvent (Proxy :: Proxy ("getListState")))
-  return res
+  return res-}
 
 
-fetchListWithManyEventNames :: (HasLogFunc env) => RIO env [String]
-fetchListWithManyEventNames = do
-
-  aw <- openMyAcidWorld2
-  res <- update aw (mkEvent (Proxy :: Proxy ("getListState")))
-  return res
-
-fetchListWithManyEventNamesInverted :: (HasLogFunc env) => RIO env [String]
-fetchListWithManyEventNamesInverted = do
-
-  aw <- openMyAcidWorld3
-  res <- update aw (mkEvent (Proxy :: Proxy ("getListState")))
-  return res
-
-openMyAcidWorld2 :: (MonadIO m) => m (AcidWorld '["List"] (Union GeneratedEventNames '["prependToList", "getListState"]))
-openMyAcidWorld2 = openAcidWorld Nothing (Proxy :: Proxy AcidWorldBackendFS) (Proxy :: Proxy AcidWorldUpdateStatePure)
-
-
-openMyAcidWorld3 :: (MonadIO m) => m (AcidWorld '["List"] (Union '["prependToList", "getListState"] GeneratedEventNames ))
-openMyAcidWorld3 = openAcidWorld Nothing (Proxy :: Proxy AcidWorldBackendFS) (Proxy :: Proxy AcidWorldUpdateStatePure)
