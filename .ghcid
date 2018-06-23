@@ -1,2 +1,2 @@
---command "stack ghci --test --ghci-options=-fobject-code"
+--command "stack ghci acid-world --bench  --ghci-options=-fobject-code"
 --restart "acid-world.cabal"

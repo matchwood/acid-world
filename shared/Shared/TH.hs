@@ -1,5 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
-module TH where
+module Shared.TH where
 import RIO
 import Language.Haskell.TH
 import Acid.World

@@ -83,8 +83,10 @@ library
 test-suite acid-world-test
   type:                exitcode-stdio-1.0
   hs-source-dirs:      test
+                       shared
   main-is:             Test.hs
-  other-modules:        TH
+  other-modules:       Shared.TH
+                       Shared.App
   ghc-options:         -Wall
                        -Wcompat
                        -Wincomplete-record-updates
@@ -98,7 +100,6 @@ test-suite acid-world-test
                      , base
                      , acid-world
                      , QuickCheck
-                     , criterion
                      , template-haskell
                      , aeson
                      , temporary
@@ -147,6 +148,76 @@ test-suite acid-world-test
   ghc-options:
     -O2
 
+benchmark acid-world-benchmark
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      benchmark
+                       shared
+  main-is:             Benchmark.hs
+  other-modules:       Shared.TH
+                       Shared.App
+  ghc-options:         -Wall
+                       -Wcompat
+                       -Wincomplete-record-updates
+                       -Wincomplete-uni-patterns
+                       -Wredundant-constraints
+                       -Werror
+                       -threaded
+                       -rtsopts
+                       -with-rtsopts=-N
+  build-depends:       rio
+                     , base
+                     , acid-world
+                     , QuickCheck
+                     , criterion
+                     , template-haskell
+                     , aeson
+                     , temporary
+                     , generics-sop
+                     , basic-sop
+  default-language:    Haskell2010
+  default-extensions:  AutoDeriveTypeable
+                       BangPatterns
+                       BinaryLiterals
+                       ConstraintKinds
+                       DataKinds
+                       DefaultSignatures
+                       DeriveDataTypeable
+                       DeriveFoldable
+                       DeriveFunctor
+                       DeriveGeneric
+                       DeriveTraversable
+                       DoAndIfThenElse
+                       EmptyDataDecls
+                       ExistentialQuantification
+                       FlexibleContexts
+                       FlexibleInstances
+                       FunctionalDependencies
+                       GADTs
+                       GeneralizedNewtypeDeriving
+                       InstanceSigs
+                       KindSignatures
+                       LambdaCase
+                       MonadFailDesugaring
+                       MultiParamTypeClasses
+                       MultiWayIf
+                       NamedFieldPuns
+                       NoImplicitPrelude
+                       OverloadedStrings
+                       PartialTypeSignatures
+                       PatternGuards
+                       PolyKinds
+                       RankNTypes
+                       RecordWildCards
+                       ScopedTypeVariables
+                       StandaloneDeriving
+                       TupleSections
+                       TypeApplications
+                       TypeFamilies
+                       TypeOperators
+                       TypeSynonymInstances
+                       ViewPatterns
+  ghc-options:
+    -O2
 source-repository head
   type:     git
   location: https://github.com/matchwood/acid-world
