@@ -15,9 +15,8 @@ import Criterion.Main
 import Criterion.Types
 import TH
 import qualified  RIO.ByteString.Lazy as BL
-import Data.Aeson(Value(..), Object)
-import Prelude (userError)
-generateEventables (eventableNames 1000)
+import Data.Aeson( Object)
+generateEventables (eventableNames 100)
 
 
 instance NFData (WrappedEvent nn ss) where
@@ -39,10 +38,7 @@ main = do
 
       env (loadValues) $ \vs -> bgroup "WithValues" [
         bench "extractWrappedEvents1" (nf extractWrappedEvents1 vs),
-        bench "extractWrappedEvents2" (nf extractWrappedEvents2 vs),
-        bench "decodeToWrappedEvents1" (nf decodeToWrappedEvents1 vs),
-        bench "decodeToWrappedEvents2" (nf decodeToWrappedEvents2 vs)
-
+        bench "extractWrappedEvents2" (nf extractWrappedEvents2 vs)
         ]
 
 {-      bench  "fetchList" (perRunEnv (Dir.copyFile (eventPath <> ".orig") eventPath) (const $ runRIO lf fetchList)),
@@ -110,17 +106,6 @@ extractWrappedEvents2 bs =
     Left err -> error $ show err
     Right ws -> extractWrappedEvents ws
 
-decodeToWrappedEvents1 :: [BL.ByteString] -> [WrappedEvent '["List"] '["prependToList", "getListState"]]
-decodeToWrappedEvents1 bs =
-  case decodeToWrappedEvents bs of
-    Left err -> error $ show err
-    Right ws -> ws
-
-decodeToWrappedEvents2 :: [BL.ByteString] -> [WrappedEvent '["List"] (Union GeneratedEventNames '["prependToList", "getListState"]  )]
-decodeToWrappedEvents2 bs =
-  case decodeToWrappedEvents bs of
-    Left err -> error $ show err
-    Right ws -> ws
 
 
 insert100k :: (HasLogFunc env) => RIO env ()

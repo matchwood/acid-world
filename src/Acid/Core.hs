@@ -158,17 +158,6 @@ newtype AcidWorldUpdateStatePure ss a = AcidWorldUpdateStatePure (St.State (Segm
   deriving (Functor, Applicative, Monad)
 
 
-type WrappedEventParsers ss nn = HM.HashMap Text (Object -> Either Text (WrappedEvent ss nn))
-
-makeParsers :: forall ss nn. (ValidEventNames ss nn) => WrappedEventParsers ss nn
-makeParsers =
-  let (wres) = cfoldMap_NP (Proxy :: Proxy (ValidEventName ss)) (\p -> [toTaggedTuple p]) proxyRec
-  in HM.fromList wres
-  where
-    proxyRec :: NP Proxy nn
-    proxyRec = pure_NP Proxy
-    toTaggedTuple :: (ValidEventName ss n) => Proxy n -> (Text, Object -> Either Text (WrappedEvent ss nn))
-    toTaggedTuple p = (toUniqueText p, decodeWrappedEvent p)
 
 
 
@@ -302,9 +291,22 @@ recToJSON xs =
 
 
 
-newtype WrappedEventT n ss nn = WrappedEventT (WrappedEvent ss nn )
+newtype WrappedEventT ss nn n = WrappedEventT (WrappedEvent ss nn )
 newtype ValueT a = ValueT Value
 
+
+
+type WrappedEventParsers ss nn = HM.HashMap Text (Object -> Either Text (WrappedEvent ss nn))
+
+makeParsers :: forall ss nn. (ValidEventNames ss nn) => WrappedEventParsers ss nn
+makeParsers =
+  let (wres) = cfoldMap_NP (Proxy :: Proxy (ValidEventName ss)) (\p -> [toTaggedTuple p]) proxyRec
+  in HM.fromList wres
+  where
+    proxyRec :: NP Proxy nn
+    proxyRec = pure_NP Proxy
+    toTaggedTuple :: (ValidEventName ss n) => Proxy n -> (Text, Object -> Either Text (WrappedEvent ss nn))
+    toTaggedTuple p = (toUniqueText p, decodeWrappedEvent p)
 
 fromJSONEither :: Aeson.FromJSON a => Value -> Either Text a
 fromJSONEither v =
@@ -324,26 +326,6 @@ decodeToTaggedValue b = do
     Just (String s) -> pure (hm, s)
     _ -> fail $ "Expected to find a text eventName key in value " <> show hm
 
-
-
-decodeToWrappedEvents :: (ValidEventNames ss nn) => [BL.ByteString] -> Either Text [WrappedEvent ss nn]
-decodeToWrappedEvents bs = do
-  let ps = makeParsers
-  sequence . sequence $ mapM (decodeToWrappedEvent ps) bs
-
-decodeToWrappedEvent :: WrappedEventParsers ss nn -> BL.ByteString -> Either Text (WrappedEvent ss nn)
-decodeToWrappedEvent ps b = do
-  hm <- left (T.pack) $ Aeson.eitherDecode' b
-  case HM.lookup "eventName" hm of
-    Just (String s) -> do
-        case HM.lookup s ps of
-          Nothing -> fail $ "Could not find parser for event named " <> show s
-          Just p -> p hm
-    _ -> fail $ "Expected to find a text eventName key in value " <> show hm
-
-
-
-
 extractWrappedEvent ::  WrappedEventParsers ss nn -> (Object, Text) -> Either Text (WrappedEvent ss nn)
 extractWrappedEvent ps (o, t) = do
   case HM.lookup t ps of
@@ -353,20 +335,21 @@ extractWrappedEvent ps (o, t) = do
 
 decodeWrappedEvent :: forall n ss nn. (ValidEventName ss n) => Proxy n -> Object -> Either Text (WrappedEvent ss nn)
 decodeWrappedEvent _ hm = do
-  ((WrappedEventT wr) :: (WrappedEventT n ss nn))  <- fromJSONEither (Object hm)
+  ((WrappedEventT wr) :: (WrappedEventT ss nn n))  <- fromJSONEither (Object hm)
   pure $ wr
 
-instance (ValidEventName ss n, EventArgs n ~ xs) => Aeson.FromJSON (WrappedEventT n ss nn) where
+instance (ValidEventName ss n, EventArgs n ~ xs) => Aeson.FromJSON (WrappedEventT ss nn n) where
   parseJSON = Aeson.withObject "WrappedEventT" $ \o -> do
     t <- o Aeson..: "eventTime"
     uid <- o Aeson..: "eventId"
     argVals <- o Aeson..: "eventArgs"
-    npV <- npValues argVals
+    {-npV <- npValues argVals
     let zipped = zipWith_NP (\_ v -> ValueT (unK v))  (pure_NP Proxy) npV
     npXs <- sequence_NP $ cmap_NP (Proxy :: Proxy Aeson.FromJSON) argToJSON zipped
-
+-}
+    npXs <- constructFromJson_NP argVals
     return $ WrappedEventT (WrappedEvent t uid ((Event $ npIToVinylHList npXs) :: Event n))
-    where
+{-    where
       argToJSON :: (Aeson.FromJSON a) => ValueT a -> Aeson.Parser a
       argToJSON (ValueT v) = Aeson.parseJSON v
       npValues :: [Value] -> Aeson.Parser (NP (K Value) xs)
@@ -374,7 +357,22 @@ instance (ValidEventName ss n, EventArgs n ~ xs) => Aeson.FromJSON (WrappedEvent
         case Generics.SOP.NP.fromList vs of
           Nothing -> fail $ "Expected to find a list that matched the number of argument xs, but got: " ++ (show vs)
           Just np -> pure np
+-}
+constructFromJson_NP :: forall xs. (All Aeson.FromJSON xs) => [Value] -> Aeson.Parser (NP I xs)
+constructFromJson_NP [] =
+  case sList :: SList xs of
+    SNil   -> pure Nil
+    SCons  -> fail "No values left but still expecting a type"
 
+constructFromJson_NP (v:vs) =
+  case sList :: SList xs of
+    SNil   -> fail "More values than expected"
+    SCons -> do
+      r <- constructFromJson_NP vs
+      a <- Aeson.parseJSON v
+      pure $ I a :* r
+
+    --f :* pure_NP f
 
 
 
