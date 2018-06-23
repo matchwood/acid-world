@@ -15,9 +15,9 @@ import Criterion.Main
 import Criterion.Types
 import TH
 import qualified  RIO.ByteString.Lazy as BL
-import Data.Aeson(Value(..))
+import Data.Aeson(Value(..), Object)
 import Prelude (userError)
-generateEventables (eventableNames 100)
+generateEventables (eventableNames 1000)
 
 
 instance NFData (WrappedEvent nn ss) where
@@ -40,7 +40,8 @@ main = do
       env (loadValues) $ \vs -> bgroup "WithValues" [
         bench "extractWrappedEvents1" (nf extractWrappedEvents1 vs),
         bench "extractWrappedEvents2" (nf extractWrappedEvents2 vs),
-        bench "extractWrappedEvents3" (nf extractWrappedEvents3 vs)
+        bench "decodeToWrappedEvents1" (nf decodeToWrappedEvents1 vs),
+        bench "decodeToWrappedEvents2" (nf decodeToWrappedEvents2 vs)
 
         ]
 
@@ -83,31 +84,44 @@ instance Eventable "getListState" where
 openMyAcidWorld :: (MonadIO m) => m (AcidWorld '["List"] '["prependToList", "getListState"])
 openMyAcidWorld = openAcidWorld Nothing (Proxy :: Proxy AcidWorldBackendFS) (Proxy :: Proxy AcidWorldUpdateStatePure)
 
-loadValues :: IO [Value]
+loadValues :: IO [BL.ByteString]
 loadValues = do
   Dir.copyFile (eventPath <> ".orig") eventPath
   bl <- BL.readFile eventPath
-
-  case decodeToValues bl of
-    Left err -> throwIO $ userError "Could not decode values"
-    Right vs -> pure vs
+  return $ filter (not . BL.null) $ BL.split 10 bl
 
 
-extractWrappedEvents ::(ValidEventNames ss nn) => [Value] -> [WrappedEvent ss nn]
+extractWrappedEvents ::(ValidEventNames ss nn) => [(Object, Text)] -> [WrappedEvent ss nn]
 extractWrappedEvents vs = do
-  case sequence $ map extractWrappedEvent vs of
+  let ps = makeParsers
+  case sequence $ map (extractWrappedEvent ps) vs of
     Left err -> error $ show err
     Right ws -> ws
 
-extractWrappedEvents1 :: [Value] -> [WrappedEvent '["List"] '["prependToList", "getListState"]]
-extractWrappedEvents1 = extractWrappedEvents
+extractWrappedEvents1 :: [BL.ByteString] -> [WrappedEvent '["List"] '["prependToList", "getListState"]]
+extractWrappedEvents1 bs =
+  case sequence . sequence $ mapM decodeToTaggedValue bs of
+    Left err -> error $ show err
+    Right ws -> extractWrappedEvents ws
 
-extractWrappedEvents2 :: [Value] -> [WrappedEvent '["List"] (Union '["prependToList", "getListState"] GeneratedEventNames )]
-extractWrappedEvents2 = extractWrappedEvents
+extractWrappedEvents2 :: [BL.ByteString]  -> [WrappedEvent '["List"] (Union GeneratedEventNames '["prependToList", "getListState"]  )]
+extractWrappedEvents2 bs =
+  case sequence . sequence $ mapM decodeToTaggedValue bs of
+    Left err -> error $ show err
+    Right ws -> extractWrappedEvents ws
 
+decodeToWrappedEvents1 :: [BL.ByteString] -> [WrappedEvent '["List"] '["prependToList", "getListState"]]
+decodeToWrappedEvents1 bs =
+  case decodeToWrappedEvents bs of
+    Left err -> error $ show err
+    Right ws -> ws
 
-extractWrappedEvents3 :: [Value] -> [WrappedEvent '["List"] (Union GeneratedEventNames '["prependToList", "getListState"]  )]
-extractWrappedEvents3 = extractWrappedEvents
+decodeToWrappedEvents2 :: [BL.ByteString] -> [WrappedEvent '["List"] (Union GeneratedEventNames '["prependToList", "getListState"]  )]
+decodeToWrappedEvents2 bs =
+  case decodeToWrappedEvents bs of
+    Left err -> error $ show err
+    Right ws -> ws
+
 
 insert100k :: (HasLogFunc env) => RIO env ()
 insert100k = do

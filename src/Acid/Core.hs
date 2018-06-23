@@ -25,7 +25,7 @@ import qualified  Data.Vinyl.Functor as V
 
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
-import Data.Aeson(ToJSON(..), Value(..))
+import Data.Aeson(ToJSON(..), Value(..), Object)
 
 import qualified Control.Concurrent.STM.TVar as  TVar
 import qualified Control.Concurrent.STM  as STM
@@ -109,15 +109,16 @@ instance ( ValidSegmentNames ss
     uState <- liftIO m
     pure (AWBStateBackendFS, uState)
   loadEvents = do
+    let ps = makeParsers
     bl <- do
       b <- Dir.doesFileExist eventPath
       if b
         then BL.readFile eventPath
         else pure ""
 
-    case decodeToValues bl of
+    case decodeToTaggedObjects bl of
       Left err -> pure $ Left err
-      Right vs -> pure $ sequence $ map extractWrappedEvent vs
+      Right vs -> pure $ sequence $ map (extractWrappedEvent ps) vs
 
 
 
@@ -155,6 +156,21 @@ class (Monad (m ss)) => AcidWorldUpdate m ss where
 
 newtype AcidWorldUpdateStatePure ss a = AcidWorldUpdateStatePure (St.State (SegmentsState ss) a)
   deriving (Functor, Applicative, Monad)
+
+
+type WrappedEventParsers ss nn = HM.HashMap Text (Object -> Either Text (WrappedEvent ss nn))
+
+makeParsers :: forall ss nn. (ValidEventNames ss nn) => WrappedEventParsers ss nn
+makeParsers =
+  let (wres) = cfoldMap_NP (Proxy :: Proxy (ValidEventName ss)) (\p -> [toTaggedTuple p]) proxyRec
+  in HM.fromList wres
+  where
+    proxyRec :: NP Proxy nn
+    proxyRec = pure_NP Proxy
+    toTaggedTuple :: (ValidEventName ss n) => Proxy n -> (Text, Object -> Either Text (WrappedEvent ss nn))
+    toTaggedTuple p = (toUniqueText p, decodeWrappedEvent p)
+
+
 
 
 instance AcidWorldUpdate AcidWorldUpdateStatePure ss where
@@ -290,37 +306,55 @@ newtype WrappedEventT n ss nn = WrappedEventT (WrappedEvent ss nn )
 newtype ValueT a = ValueT Value
 
 
-decodeToValues :: BL.ByteString -> Either Text [Value]
-decodeToValues bl = do
+fromJSONEither :: Aeson.FromJSON a => Value -> Either Text a
+fromJSONEither v =
+  case Aeson.fromJSON v of
+    (Aeson.Success a) -> pure a
+    (Aeson.Error e) -> fail e
+
+decodeToTaggedObjects :: BL.ByteString -> Either Text [(Object, Text)]
+decodeToTaggedObjects bl = do
   let bs = filter (not . BL.null) $ BL.split 10 bl
-  left (T.pack) $ sequence . sequence $ mapM Aeson.eitherDecode' bs
+  sequence . sequence $ mapM decodeToTaggedValue bs
+
+decodeToTaggedValue :: BL.ByteString -> Either Text (Object, Text)
+decodeToTaggedValue b = do
+  hm <- left (T.pack) $ Aeson.eitherDecode' b
+  case HM.lookup "eventName" hm of
+    Just (String s) -> pure (hm, s)
+    _ -> fail $ "Expected to find a text eventName key in value " <> show hm
 
 
 
-extractWrappedEvent :: forall ss nn. (ValidEventNames ss nn) => Value -> Either Text (WrappedEvent ss nn)
-extractWrappedEvent v = do
-  let (wres :: [Either Text (Maybe (WrappedEvent ss nn))]) = cfoldMap_NP (Proxy :: Proxy (ValidEventName ss)) (\p -> [decodeWrappedEvent v p]) proxyRec
-  mEvents <- sequence wres
-  case catMaybes mEvents of
-    (x:[]) -> pure x
-    [] -> fail $ "Could not parse unknown event: " <> show v
-    _ -> fail $ "Multiple events parsed from a single value: " <> show v
-  where
-      proxyRec :: NP Proxy nn
-      proxyRec = pure_NP Proxy
+decodeToWrappedEvents :: (ValidEventNames ss nn) => [BL.ByteString] -> Either Text [WrappedEvent ss nn]
+decodeToWrappedEvents bs = do
+  let ps = makeParsers
+  sequence . sequence $ mapM (decodeToWrappedEvent ps) bs
 
-decodeWrappedEvent :: forall n ss nn. (ValidEventName ss n) =>  Value -> Proxy n -> Either Text (Maybe (WrappedEvent ss nn))
-decodeWrappedEvent (Object hm) p =
-  case HM.lookup "eventName" hm == (Just (Aeson.String (toUniqueText p))) of
-    False -> Right (Nothing)
-    True -> do
-      ((WrappedEventT wr) :: (WrappedEventT n ss nn))  <- do
-        case Aeson.fromJSON (Object hm) of
-          (Aeson.Success a) -> pure a
-          (Aeson.Error e) -> fail e
-      pure . pure $ wr
-decodeWrappedEvent _ _ = Left "Expected object in decodeWrappedEvent"
+decodeToWrappedEvent :: WrappedEventParsers ss nn -> BL.ByteString -> Either Text (WrappedEvent ss nn)
+decodeToWrappedEvent ps b = do
+  hm <- left (T.pack) $ Aeson.eitherDecode' b
+  case HM.lookup "eventName" hm of
+    Just (String s) -> do
+        case HM.lookup s ps of
+          Nothing -> fail $ "Could not find parser for event named " <> show s
+          Just p -> p hm
+    _ -> fail $ "Expected to find a text eventName key in value " <> show hm
 
+
+
+
+extractWrappedEvent ::  WrappedEventParsers ss nn -> (Object, Text) -> Either Text (WrappedEvent ss nn)
+extractWrappedEvent ps (o, t) = do
+  case HM.lookup t ps of
+    Nothing -> fail $ "Could not find parser for event named " <> show t
+    Just p -> p o
+
+
+decodeWrappedEvent :: forall n ss nn. (ValidEventName ss n) => Proxy n -> Object -> Either Text (WrappedEvent ss nn)
+decodeWrappedEvent _ hm = do
+  ((WrappedEventT wr) :: (WrappedEventT n ss nn))  <- fromJSONEither (Object hm)
+  pure $ wr
 
 instance (ValidEventName ss n, EventArgs n ~ xs) => Aeson.FromJSON (WrappedEventT n ss nn) where
   parseJSON = Aeson.withObject "WrappedEventT" $ \o -> do
