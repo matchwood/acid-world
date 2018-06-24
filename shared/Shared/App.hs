@@ -30,7 +30,7 @@ topLevelTestDir = "./tmp"
 topLevelStoredStateDir :: FilePath
 topLevelStoredStateDir = "./var"
 
-instance NFData (AcidWorld a n) where
+instance NFData (AcidWorld a n t) where
   rnf _ = ()
 
 sampleUser :: User
@@ -70,7 +70,7 @@ instance Segment "Users" where
   defaultState _ = IxSet.empty
 
 
-insertUser :: (AcidWorldUpdate m ss, HasSegment ss  "Users") => User -> m ss User
+insertUser :: (AcidWorldUpdateInner m ss, HasSegment ss  "Users") => User -> m ss User
 insertUser a = do
   ls <- getSegment (Proxy :: Proxy "Users")
   let newLs = IxSet.insert a ls
@@ -110,7 +110,7 @@ generateUsers i = do
 type AppSegments = '["Users"]
 type AppEvents = '["insertUser", "fetchUsers", "fetchUsersStats"]
 
-type AppAW = AcidWorld AppSegments AppEvents
+type AppAW = AcidWorld AppSegments AppEvents AcidSerialiserJSON
 
 type Middleware env = IO AppAW -> IO AppAW
 
@@ -142,7 +142,7 @@ openAppAcidWorldRestoreState s = do
   t <- mkTempDir
   let e = topLevelStoredStateDir <> "/" <> "testState" <> s
   copyDirectory e t
-  aw <- throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure
+  aw <- throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure AcidSerialiserJSONOptions
   -- this is to force the internal state
   i <- runFetchUsersStats aw
   putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
@@ -152,7 +152,7 @@ openAppAcidWorldRestoreState s = do
 openAppAcidWorldFresh :: IO AppAW
 openAppAcidWorldFresh = do
   t <- mkTempDir
-  throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure
+  throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure AcidSerialiserJSONOptions
 
 
 closeAndReopen :: Middleware env
@@ -167,7 +167,7 @@ closeAcidWorldMiddleware iAw = do
 reopenAcidWorld :: Middleware env
 reopenAcidWorld iAw = do
   (AcidWorld{..}) <- iAw
-  throwEither $ openAcidWorld Nothing (acidWorldBackendConfig) (acidWorldUpdateMonadConfig)
+  throwEither $ openAcidWorld Nothing (acidWorldBackendConfig) (acidWorldUpdateMonadConfig) acidWorldSerialiserOptions
 
 
 insertUsers :: Int -> Middleware env

@@ -16,7 +16,12 @@ library
     Acid.World
     Acid.Core
     Acid.Core.Segment
+    Acid.Core.Event
     Acid.Core.Utils
+    Acid.Core.Serialise
+    Acid.Core.Serialise.Abstract
+    Acid.Core.Serialise.JSON
+    Acid.Core.Serialise.CBOR
   other-modules:
   build-depends:
     base,
