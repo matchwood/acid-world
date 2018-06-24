@@ -1,9 +1,8 @@
 resolver: lts-11.6
+allow-newer: true
 packages:
 - '.'
 extra-deps:
 - rio-0.1.1.0
-- HList-0.5.0.0
 - vinyl-0.8.1.1
 - basic-sop-0.2.0.2
-- QuickCheck-2.9.2

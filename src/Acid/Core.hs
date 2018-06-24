@@ -29,6 +29,7 @@ import qualified Control.Concurrent.STM  as STM
 import qualified Data.UUID  as UUID
 import qualified Data.UUID.V4  as UUID
 
+import Prelude(putStrLn)
 import Acid.Core.Segment
 import Acid.Core.Utils
 
@@ -45,8 +46,8 @@ data AcidWorld  ss nn where
                ) => {
     acidWorldBackendConfig :: AWBConfig bMonad ss nn,
     acidWorldUpdateMonadConfig :: AWUConfig uMonad ss,
-    acidWorldBackendInitState :: AWBState bMonad ss nn,
-    acidWorldUpdateMonadInitState :: AWUState uMonad ss
+    acidWorldBackendState :: AWBState bMonad ss nn,
+    acidWorldUpdateState :: AWUState uMonad ss
     } -> AcidWorld ss nn
 
 
@@ -58,21 +59,26 @@ openAcidWorld :: forall m ss nn bMonad uMonad.
                ) => Maybe (SegmentsState ss) -> AWBConfig bMonad ss nn -> AWUConfig uMonad ss ->  m (AcidWorld ss nn)
 openAcidWorld mDefSt acidWorldBackendConfig acidWorldUpdateMonadConfig = do
   let defState = fromMaybe (defaultSegmentsState (Proxy :: Proxy ss)) mDefSt
-  (acidWorldBackendInitState) <- initialise acidWorldBackendConfig defState
+  (acidWorldBackendState) <- initialiseBackend acidWorldBackendConfig defState
 
 
   let handles = BackendHandles {
-          bhLoadEvents = loadEvents acidWorldBackendInitState,
-          bhGetLastCheckpointState = getLastCheckpointState acidWorldBackendInitState
+          bhLoadEvents = loadEvents acidWorldBackendState,
+          bhGetLastCheckpointState = getLastCheckpointState acidWorldBackendState
         }
 
-  (acidWorldUpdateMonadInitState) <- initialiseUpdate acidWorldUpdateMonadConfig handles defState
+  (acidWorldUpdateState) <- initialiseUpdate acidWorldUpdateMonadConfig handles defState
 
   return $ AcidWorld{..}
 
+closeAcidWorld :: (MonadIO m) => AcidWorld ss nn -> m ()
+closeAcidWorld (AcidWorld {..}) = do
+  closeBackend acidWorldBackendState
+  closeUpdate acidWorldUpdateState
+
 
 update :: (IsValidEvent ss nn n, MonadIO m) => AcidWorld ss nn -> Event n -> m (EventResult n)
-update (AcidWorld {..}) = handleUpdateEvent acidWorldBackendInitState acidWorldUpdateMonadInitState
+update (AcidWorld {..}) = handleUpdateEvent acidWorldBackendState acidWorldUpdateState
 
 data BackendHandles m ss nn = BackendHandles {
     bhLoadEvents :: MonadIO m => m (Either Text (VB.Vector (WrappedEvent ss nn))),
@@ -91,7 +97,10 @@ class ( Monad (m ss nn)
   AcidWorldBackend (m :: [Symbol] -> [Symbol] -> * -> *) (ss :: [Symbol]) (nn :: [Symbol]) where
   data AWBState m ss nn
   data AWBConfig m ss nn
-  initialise :: (MonadIO z) => AWBConfig m ss nn -> (SegmentsState ss) -> z (AWBState m ss nn)
+  initialiseBackend :: (MonadIO z) => AWBConfig m ss nn -> (SegmentsState ss) -> z (AWBState m ss nn)
+  closeBackend :: (MonadIO z) => AWBState m ss nn -> z ()
+  closeBackend _ = pure ()
+
   -- should return the most recent checkpoint state, if any
   getLastCheckpointState :: (MonadIO z) => AWBState m ss nn -> z (Maybe (SegmentsState ss))
   getLastCheckpointState _ = pure Nothing
@@ -116,19 +125,17 @@ instance ( ValidSegmentNames ss
   data AWBConfig AcidWorldBackendFS ss nn = AWBConfigBackendFS {
     aWBConfigBackendFSStateDir :: FilePath
   }
-  initialise c _  = do
+  initialiseBackend c _  = do
     stateP <- Dir.makeAbsolute (aWBConfigBackendFSStateDir c)
     Dir.createDirectoryIfMissing True stateP
+    let eventPath = makeEventPath stateP
+    b <- Dir.doesFileExist eventPath
+    when (not b) (BL.writeFile eventPath "")
     pure $ AWBStateBackendFS c{aWBConfigBackendFSStateDir = stateP}
   loadEvents s = do
     let eventPath = makeEventPath (aWBConfigBackendFSStateDir . sWBStateBackendConfig $ s)
     let ps = makeParsers
-    bl <- do
-      b <- Dir.doesFileExist eventPath
-      if b
-        then BL.readFile eventPath
-        else pure ""
-
+    bl <- BL.readFile eventPath
     case decodeToTaggedObjects bl of
       Left err -> pure $ Left err
       Right vs -> pure $ sequence $ VB.map (extractWrappedEvent ps) vs
@@ -136,8 +143,6 @@ instance ( ValidSegmentNames ss
   handleUpdateEvent awb awu (e :: Event n) = do
     let eventPath = makeEventPath (aWBConfigBackendFSStateDir . sWBStateBackendConfig $ awb)
     (wr :: WrappedEvent ss nn) <- mkWrappedEvent e
-    b <- Dir.doesFileExist eventPath
-    when (not b) (BL.writeFile eventPath "")
     BL.appendFile eventPath (Aeson.encode wr <> "\n")
 
     let (AcidWorldBackendFS m :: AcidWorldBackendFS ss nn (EventResult n)) = runUpdateEvent awu e
@@ -160,6 +165,9 @@ class (Monad (m ss)) => AcidWorldUpdate m ss where
   data AWUState m ss
   data AWUConfig m ss
   initialiseUpdate :: (MonadIO z, MonadThrow z) => AWUConfig m ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (AWUState m ss)
+  closeUpdate :: (MonadIO z) => AWUState m ss -> z ()
+  closeUpdate _ = pure ()
+
   getSegment :: (HasSegment ss s) =>  Proxy s -> m ss (SegmentS s)
   putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> m ss ()
 
@@ -178,7 +186,8 @@ newtype AcidWorldUpdateStatePure ss a = AcidWorldUpdateStatePure (St.State (Segm
 
 instance AcidWorldUpdate AcidWorldUpdateStatePure ss where
   data AWUState AcidWorldUpdateStatePure ss = AWUStateStatePure {
-      aWUStateStatePure :: TVar (SegmentsState ss)
+      aWUStateStatePure :: !(TVar (SegmentsState ss)),
+      aWUStateStateDefState :: !(SegmentsState ss)
     }
   data AWUConfig AcidWorldUpdateStatePure ss = AWUConfigStatePure
   initialiseUpdate _ (BackendHandles{..}) defState = do
@@ -189,10 +198,11 @@ instance AcidWorldUpdate AcidWorldUpdateStatePure ss where
       case errEs of
         Left err -> throwM $ AcidWorldInitialisationE err
         Right es -> pure es
-    let (AcidWorldUpdateStatePure stm) = mapM runWrappedEvent events
-    let (_ , s) = St.runState stm startState
+    let (AcidWorldUpdateStatePure stm) = V.mapM runWrappedEvent events
+    let (_ , !s) = St.runState stm startState
     tvar <- liftIO $ STM.atomically $ TVar.newTVar s
-    pure $ AWUStateStatePure tvar
+
+    pure $ AWUStateStatePure tvar s
   getSegment (Proxy :: Proxy s) = do
     r <- AcidWorldUpdateStatePure St.get
     pure $ V.getField $ V.rgetf (V.Label :: V.Label s) r
@@ -203,7 +213,7 @@ instance AcidWorldUpdate AcidWorldUpdateStatePure ss where
     let (AcidWorldUpdateStatePure stm :: AcidWorldUpdateStatePure ss (EventResult n)) = runEvent (Proxy :: Proxy n) xs
     liftIO $ STM.atomically $ do
       s <- STM.readTVar (aWUStateStatePure awuState)
-      let (a, s') = St.runState stm s
+      (!a, !s') <- pure $ St.runState stm s
       STM.writeTVar (aWUStateStatePure awuState) s'
       return a
 

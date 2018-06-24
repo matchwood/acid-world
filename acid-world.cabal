@@ -22,7 +22,6 @@ library
     base,
     rio,
     generics-sop,
-    HList,
     mtl,
     vinyl,
     aeson,
@@ -100,9 +99,15 @@ test-suite acid-world-test
                      , base
                      , acid-world
                      , QuickCheck
+                     , criterion
                      , template-haskell
                      , aeson
                      , temporary
+                     , generics-sop
+                     , basic-sop
+                     , quickcheck-instances
+                     , ixset-typed
+                     , filepath
   default-language:    Haskell2010
   default-extensions:  AutoDeriveTypeable
                        BangPatterns
@@ -174,6 +179,9 @@ benchmark acid-world-benchmark
                      , temporary
                      , generics-sop
                      , basic-sop
+                     , quickcheck-instances
+                     , ixset-typed
+                     , filepath
   default-language:    Haskell2010
   default-extensions:  AutoDeriveTypeable
                        BangPatterns
