@@ -4,17 +4,17 @@
 module Acid.Core.Backend.FS where
 import RIO
 import qualified RIO.Directory as Dir
+import qualified RIO.Text as T
 import qualified  RIO.ByteString.Lazy as BL
-import qualified  RIO.Vector.Boxed as VB
 
 
-
+import Prelude(userError)
 
 import Acid.Core.Segment
 import Acid.Core.Event
 import Acid.Core.Backend.Abstract
 import Acid.Core.Inner.Abstract
-
+import Conduit
 
 newtype AcidWorldBackendFS ss nn a = AcidWorldBackendFS (IO a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadThrow)
@@ -44,12 +44,23 @@ instance ( ValidSegmentNames ss
     let eventPath = makeEventPath (aWBConfigBackendFSStateDir . sWBStateBackendConfig $ s)
 
 
+    let blSrc =
+         sourceFile eventPath .|
+         linesUnboundedAsciiC .|
+         mapC BL.fromStrict .|
+         mapC deserialiser .|
+         mapMC throwOnEither
+    pure blSrc
 
-    bl <- BL.readFile eventPath
-    let bs = VB.filter (not . BL.null) $ VB.fromList $ BL.split 10 bl
+    where
+      throwOnEither :: (MonadThrow m) => Either Text a -> m a
+      throwOnEither (Left t) = throwM $ userError (T.unpack t)
+      throwOnEither (Right a) = pure a
+    {-
+    a <- liftIO $ runConduitRes blSrc
 
-    pure $ sequence $ VB.map deserialiser bs
-
+    pure $ sequence a
+-}
   -- this should be bracketed and so forth @todo
   handleUpdateEvent serializer awb awu (e :: Event n) = do
     let eventPath = makeEventPath (aWBConfigBackendFSStateDir . sWBStateBackendConfig $ awb)

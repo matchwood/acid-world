@@ -37,7 +37,8 @@ library
     vinyl,
     aeson,
     stm,
-    uuid
+    uuid,
+    conduit
 
 
   hs-source-dirs:      src

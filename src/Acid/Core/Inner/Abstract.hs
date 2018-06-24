@@ -2,14 +2,14 @@ module Acid.Core.Inner.Abstract where
 
 
 import RIO
-import qualified  RIO.Vector.Boxed as VB
 
 
 import Acid.Core.Segment
 import Acid.Core.Event
+import Conduit
 
 data BackendHandles m ss nn = BackendHandles {
-    bhLoadEvents :: MonadIO m => m (Either Text (VB.Vector (WrappedEvent ss nn))),
+    bhLoadEvents :: forall i. MonadIO m => m (ConduitT i (WrappedEvent ss nn) (ResourceT IO) ()),
     bhGetLastCheckpointState :: MonadIO m => m (Maybe (SegmentsState ss))
   }
 

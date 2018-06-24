@@ -4,7 +4,6 @@
 
 module Acid.Core.Backend.Abstract where
 import RIO
-import qualified  RIO.Vector.Boxed as VB
 
 import GHC.TypeLits
 
@@ -12,6 +11,7 @@ import GHC.TypeLits
 import Acid.Core.Segment
 import Acid.Core.Event
 import Acid.Core.Inner.Abstract
+import Conduit
 
 class ( Monad (m ss nn)
       , MonadIO (m ss nn)
@@ -31,6 +31,6 @@ class ( Monad (m ss nn)
   getLastCheckpointState :: (MonadIO z) => AWBState m ss nn -> z (Maybe (SegmentsState ss))
   getLastCheckpointState _ = pure Nothing
   -- return events since the last checkpoint, if any
-  loadEvents :: (MonadIO z) => (AWBSerialiseT m ss nn -> Either Text (WrappedEvent ss nn)) ->  AWBState m ss nn -> z (Either Text (VB.Vector (WrappedEvent ss nn)))
-  loadEvents _ _ = pure . pure $ VB.empty
+  loadEvents :: (MonadIO z) => (AWBSerialiseT m ss nn -> Either Text (WrappedEvent ss nn)) ->  AWBState m ss nn -> z (ConduitT i (WrappedEvent ss nn) (ResourceT IO) ())
+  loadEvents _ _ = pure $ yieldMany []
   handleUpdateEvent :: (IsValidEvent ss nn n, MonadIO z, AcidWorldUpdate u ss) => (StorableEvent ss nn n -> AWBSerialiseT m ss nn) ->  (AWBState m ss nn) -> (AWUState u ss) -> Event n -> z (EventResult n)

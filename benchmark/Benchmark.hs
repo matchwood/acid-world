@@ -14,7 +14,7 @@ import Shared.App
 main :: IO ()
 main = do
 
- -- openAppAcidWorldRestoreState "100kUsers"
+  --openAppAcidWorldRestoreState "1mUsers"
 
   let conf = defaultConfig {
         timeLimit = 20
