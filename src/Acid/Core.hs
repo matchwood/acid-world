@@ -29,7 +29,6 @@ import qualified Control.Concurrent.STM  as STM
 import qualified Data.UUID  as UUID
 import qualified Data.UUID.V4  as UUID
 
-import Prelude(putStrLn)
 import Acid.Core.Segment
 import Acid.Core.Utils
 
@@ -43,33 +42,38 @@ data AcidWorld  ss nn where
   AcidWorld :: (
                  AcidWorldBackend bMonad ss nn
                , AcidWorldUpdate uMonad ss
+               , AcidSerialiseEvent t
                ) => {
     acidWorldBackendConfig :: AWBConfig bMonad ss nn,
     acidWorldUpdateMonadConfig :: AWUConfig uMonad ss,
     acidWorldBackendState :: AWBState bMonad ss nn,
-    acidWorldUpdateState :: AWUState uMonad ss
+    acidWorldUpdateState :: AWUState uMonad ss,
+    acidWorldSerialiserOptions :: AcidSerialiseEventOptions t
     } -> AcidWorld ss nn
 
 
-openAcidWorld :: forall m ss nn bMonad uMonad.
+openAcidWorld :: forall m ss nn bMonad uMonad t.
                ( MonadIO m
                , MonadThrow m
                , AcidWorldBackend bMonad ss nn
                , AcidWorldUpdate uMonad ss
-               ) => Maybe (SegmentsState ss) -> AWBConfig bMonad ss nn -> AWUConfig uMonad ss ->  m (AcidWorld ss nn)
-openAcidWorld mDefSt acidWorldBackendConfig acidWorldUpdateMonadConfig = do
+               , AcidSerialiseEvent t
+               ) => Maybe (SegmentsState ss) -> AWBConfig bMonad ss nn -> AWUConfig uMonad ss -> AcidSerialiseEventOptions t ->  m (Either Text (AcidWorld ss nn))
+openAcidWorld mDefSt acidWorldBackendConfig acidWorldUpdateMonadConfig acidWorldSerialiserOptions = do
   let defState = fromMaybe (defaultSegmentsState (Proxy :: Proxy ss)) mDefSt
-  (acidWorldBackendState) <- initialiseBackend acidWorldBackendConfig defState
+  (eAcidWorldBackendState) <- initialiseBackend acidWorldBackendConfig defState
+  case eAcidWorldBackendState of
+    Left err -> pure . Left $ err
+    Right acidWorldBackendState -> do
+      let handles = BackendHandles {
+              bhLoadEvents = loadEvents acidWorldBackendState,
+              bhGetLastCheckpointState = getLastCheckpointState acidWorldBackendState
+            }
 
-
-  let handles = BackendHandles {
-          bhLoadEvents = loadEvents acidWorldBackendState,
-          bhGetLastCheckpointState = getLastCheckpointState acidWorldBackendState
-        }
-
-  (acidWorldUpdateState) <- initialiseUpdate acidWorldUpdateMonadConfig handles defState
-
-  return $ AcidWorld{..}
+      (eAcidWorldUpdateState) <- initialiseUpdate acidWorldUpdateMonadConfig handles defState
+      pure $ do
+        acidWorldUpdateState <- eAcidWorldUpdateState
+        pure AcidWorld{..}
 
 closeAcidWorld :: (MonadIO m) => AcidWorld ss nn -> m ()
 closeAcidWorld (AcidWorld {..}) = do
@@ -97,7 +101,8 @@ class ( Monad (m ss nn)
   AcidWorldBackend (m :: [Symbol] -> [Symbol] -> * -> *) (ss :: [Symbol]) (nn :: [Symbol]) where
   data AWBState m ss nn
   data AWBConfig m ss nn
-  initialiseBackend :: (MonadIO z) => AWBConfig m ss nn -> (SegmentsState ss) -> z (AWBState m ss nn)
+  type AWBSerialiseT m ss nn :: *
+  initialiseBackend :: (MonadIO z) => AWBConfig m ss nn -> (SegmentsState ss) -> z (Either Text (AWBState m ss nn))
   closeBackend :: (MonadIO z) => AWBState m ss nn -> z ()
   closeBackend _ = pure ()
 
@@ -125,13 +130,14 @@ instance ( ValidSegmentNames ss
   data AWBConfig AcidWorldBackendFS ss nn = AWBConfigBackendFS {
     aWBConfigBackendFSStateDir :: FilePath
   }
+  type AWBSerialiseT AcidWorldBackendFS ss nn = BL.ByteString
   initialiseBackend c _  = do
     stateP <- Dir.makeAbsolute (aWBConfigBackendFSStateDir c)
     Dir.createDirectoryIfMissing True stateP
     let eventPath = makeEventPath stateP
     b <- Dir.doesFileExist eventPath
     when (not b) (BL.writeFile eventPath "")
-    pure $ AWBStateBackendFS c{aWBConfigBackendFSStateDir = stateP}
+    pure . pure $ AWBStateBackendFS c{aWBConfigBackendFSStateDir = stateP}
   loadEvents s = do
     let eventPath = makeEventPath (aWBConfigBackendFSStateDir . sWBStateBackendConfig $ s)
     let ps = makeParsers
@@ -164,7 +170,7 @@ runWrappedEvent (WrappedEvent _ _ (Event xs :: Event n)) = void $ runEvent (Prox
 class (Monad (m ss)) => AcidWorldUpdate m ss where
   data AWUState m ss
   data AWUConfig m ss
-  initialiseUpdate :: (MonadIO z, MonadThrow z) => AWUConfig m ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (AWUState m ss)
+  initialiseUpdate :: (MonadIO z, MonadThrow z) => AWUConfig m ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWUState m ss))
   closeUpdate :: (MonadIO z) => AWUState m ss -> z ()
   closeUpdate _ = pure ()
 
@@ -193,16 +199,14 @@ instance AcidWorldUpdate AcidWorldUpdateStatePure ss where
   initialiseUpdate _ (BackendHandles{..}) defState = do
     mCpState <- bhGetLastCheckpointState
     let startState = fromMaybe defState mCpState
-    events <- do
-      errEs <- bhLoadEvents
-      case errEs of
-        Left err -> throwM $ AcidWorldInitialisationE err
-        Right es -> pure es
-    let (AcidWorldUpdateStatePure stm) = V.mapM runWrappedEvent events
-    let (_ , !s) = St.runState stm startState
-    tvar <- liftIO $ STM.atomically $ TVar.newTVar s
-
-    pure $ AWUStateStatePure tvar s
+    errEs <- bhLoadEvents
+    case errEs of
+      Left err -> pure . Left $ err
+      Right events -> do
+        let (AcidWorldUpdateStatePure stm) = V.mapM runWrappedEvent events
+        let (_ , !s) = St.runState stm startState
+        tvar <- liftIO $ STM.atomically $ TVar.newTVar s
+        pure . pure $ AWUStateStatePure tvar s
   getSegment (Proxy :: Proxy s) = do
     r <- AcidWorldUpdateStatePure St.get
     pure $ V.getField $ V.rgetf (V.Label :: V.Label s) r
@@ -216,6 +220,29 @@ instance AcidWorldUpdate AcidWorldUpdateStatePure ss where
       (!a, !s') <- pure $ St.runState stm s
       STM.writeTVar (aWUStateStatePure awuState) s'
       return a
+
+
+{-
+Serialisation
+
+-}
+
+
+
+class AcidSerialiseEvent t where
+  data AcidSerialiseEventOptions t :: *
+  type AcidSerialiseT t :: *
+  acidSerialiseEvent :: AcidSerialiseEventOptions t -> WrappedEvent ss nn -> AcidSerialiseT t
+  acidDeserialiseEvent ::AcidSerialiseEventOptions t -> AcidSerialiseT t -> Either Text (WrappedEvent ss nn)
+
+
+data AcidSerialiseEventJSON
+
+instance AcidSerialiseEvent AcidSerialiseEventJSON where
+  data AcidSerialiseEventOptions AcidSerialiseEventJSON = AcidSerialiseEventJSONOptions
+  type AcidSerialiseT AcidSerialiseEventJSON = BL.ByteString
+  acidSerialiseEvent _ wr = Aeson.encode wr
+  acidDeserialiseEvent  _ _ = undefined
 
 
 {- EVENTS -}

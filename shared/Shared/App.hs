@@ -3,7 +3,8 @@
 module Shared.App where
 
 import RIO
-import Prelude(userError)
+import Prelude(userError, putStrLn)
+import qualified RIO.Text as T
 import qualified RIO.Time as Time
 import qualified RIO.Directory as Dir
 
@@ -141,17 +142,17 @@ openAppAcidWorldRestoreState s = do
   t <- mkTempDir
   let e = topLevelStoredStateDir <> "/" <> "testState" <> s
   copyDirectory e t
-  aw <- openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure
+  aw <- throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure
   -- this is to force the internal state
   i <- runFetchUsersStats aw
-  traceM $ utf8BuilderToText $ "Opened aw with " <> displayShow i
+  putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
   pure aw
 
 
 openAppAcidWorldFresh :: IO AppAW
 openAppAcidWorldFresh = do
   t <- mkTempDir
-  openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure
+  throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure
 
 
 closeAndReopen :: Middleware env
@@ -166,7 +167,7 @@ closeAcidWorldMiddleware iAw = do
 reopenAcidWorld :: Middleware env
 reopenAcidWorld iAw = do
   (AcidWorld{..}) <- iAw
-  openAcidWorld Nothing (acidWorldBackendConfig) (acidWorldUpdateMonadConfig)
+  throwEither $ openAcidWorld Nothing (acidWorldBackendConfig) (acidWorldUpdateMonadConfig)
 
 
 insertUsers :: Int -> Middleware env
@@ -185,8 +186,15 @@ runFetchUsersStats :: AppAW -> IO Int
 runFetchUsersStats aw = update aw (mkEvent (Proxy :: Proxy ("fetchUsersStats")) )
 
 
+throwEither :: IO (Either Text a) -> IO a
+throwEither act = do
+  res <- act
+  case res of
+    Right a -> pure a
+    Left err -> throwUserError $ T.unpack err
 
-
+throwUserError :: String -> IO a
+throwUserError = throwIO . userError
 
 
 
