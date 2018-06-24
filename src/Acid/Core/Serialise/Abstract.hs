@@ -11,6 +11,8 @@ import Data.Proxy(Proxy(..))
 
 import Acid.Core.Event
 
+
+
 {-
 
   This is a fiddly setup. The issue is that we want to abstract serialisation in a context where we are parsing to constrained types. The general approach here is to

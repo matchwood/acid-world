@@ -22,6 +22,12 @@ library
     Acid.Core.Serialise.Abstract
     Acid.Core.Serialise.JSON
     Acid.Core.Serialise.CBOR
+    Acid.Core.Backend
+    Acid.Core.Backend.Abstract
+    Acid.Core.Backend.FS
+    Acid.Core.Inner
+    Acid.Core.Inner.Abstract
+    Acid.Core.Inner.PureState
   other-modules:
   build-depends:
     base,
