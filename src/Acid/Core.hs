@@ -159,9 +159,6 @@ makeEventPath fp = fp <> "/" <> "events.json"
 AcidWorld Inner monad
 -}
 
-runWrappedEvent :: AcidWorldUpdate m ss => WrappedEvent ss e -> m ss ()
-
-runWrappedEvent (WrappedEvent _ _ (Event xs :: Event n)) = void $ runEvent (Proxy :: Proxy n) xs
 
 class (AcidWorldUpdateInner m ss) => AcidWorldUpdate m ss where
   data AWUState m ss
@@ -169,9 +166,6 @@ class (AcidWorldUpdateInner m ss) => AcidWorldUpdate m ss where
   initialiseUpdate :: (MonadIO z, MonadThrow z) => AWUConfig m ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWUState m ss))
   closeUpdate :: (MonadIO z) => AWUState m ss -> z ()
   closeUpdate _ = pure ()
-
-
-
   runUpdateEvent :: ( ValidEventName ss n
                     , MonadIO z) =>
     AWUState m ss -> Event n -> z (EventResult n)

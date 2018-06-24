@@ -17,8 +17,11 @@ import qualified Data.UUID.V4  as UUID
 import Acid.Core.Segment
 import Acid.Core.Utils
 
+-- this is the class that events run in
 
-
+class (Monad (m ss)) => AcidWorldUpdateInner m ss where
+  getSegment :: (HasSegment ss s) =>  Proxy s -> m ss (SegmentS s)
+  putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> m ss ()
 
 class ToUniqueText (a :: k) where
   toUniqueText :: Proxy a -> Text
@@ -50,9 +53,7 @@ type ValidEventNames ss nn = All (ValidEventName ss) nn
 type EventableR n xs r =
   (Eventable n, EventArgs n ~ xs, EventResult n ~ r)
 
-class (Monad (m ss)) => AcidWorldUpdateInner m ss where
-  getSegment :: (HasSegment ss s) =>  Proxy s -> m ss (SegmentS s)
-  putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> m ss ()
+
 
 class (ToUniqueText n, SListI (EventArgs n)) => Eventable (n :: k) where
   type EventArgs n :: [*]
@@ -93,11 +94,11 @@ data WrappedEvent ss nn where
     wrappedEventId :: UUID.UUID,
     wrappedEventEvent :: Event n} -> WrappedEvent ss nn
 
-
-
 newtype WrappedEventT ss nn n = WrappedEventT (WrappedEvent ss nn )
 
 
+runWrappedEvent :: AcidWorldUpdateInner m ss => WrappedEvent ss e -> m ss ()
+runWrappedEvent (WrappedEvent _ _ (Event xs :: Event n)) = void $ runEvent (Proxy :: Proxy n) xs
 
 
 
