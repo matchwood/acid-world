@@ -3,6 +3,7 @@
 module Shared.App where
 
 import RIO
+import Prelude(userError)
 import qualified RIO.Time as Time
 import qualified RIO.Directory as Dir
 
@@ -200,6 +201,9 @@ copyDirectory :: FilePath -> FilePath -> IO ()
 copyDirectory oldO newO = do
   old <- Dir.makeAbsolute oldO
   new <- Dir.makeAbsolute newO
+  testExist <- Dir.doesDirectoryExist old
+  when (not testExist) (throwIO $ userError $ "Source directory " <> old <> " does not exist")
+
   allFiles <- getAbsDirectoryContentsRecursive old
   let ts = map (\f -> (f, toNewPath old new f)) allFiles
   void $ mapM (uncurry copyOldToNew) ts

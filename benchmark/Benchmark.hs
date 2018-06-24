@@ -21,7 +21,7 @@ main = do
        }
   -- it seems like we should perRunEnv for the generateUser part of this, but that causes major issues with criterion - something like 3 or 4 order of magnitude slow down in the benchmarked code
   defaultMainWith conf [
-    env openAppAcidWorldFresh $ \aw ->
+    env (openAppAcidWorldFresh) $ \aw ->
           bgroup "Empty state" [
              bench "insertUser" $ whnfIO (generateUser >>= runInsertUser aw)
            ],
