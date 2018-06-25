@@ -40,19 +40,20 @@ instance ( ValidSegmentNames ss
     b <- Dir.doesFileExist eventPath
     when (not b) (BL.writeFile eventPath "")
     pure . pure $ AWBStateBackendFS c{aWBConfigBackendFSStateDir = stateP}
-  loadEvents deserialiser s = do
+  loadEvents deserialiseConduit s = do
     let eventPath = makeEventPath (aWBConfigBackendFSStateDir . sWBStateBackendConfig $ s)
 
 
     let blSrc =
          sourceFile eventPath .|
-         linesUnboundedAsciiC .|
          mapC BL.fromStrict .|
-         mapC deserialiser .|
+         deserialiseConduit .|
          mapMC throwOnEither
     pure blSrc
 
     where
+
+
       throwOnEither :: (MonadThrow m) => Either Text a -> m a
       throwOnEither (Left t) = throwM $ userError (T.unpack t)
       throwOnEither (Right a) = pure a

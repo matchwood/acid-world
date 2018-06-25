@@ -38,7 +38,8 @@ library
     aeson,
     stm,
     uuid,
-    conduit
+    conduit,
+    serialise
 
 
   hs-source-dirs:      src

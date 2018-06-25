@@ -31,6 +31,6 @@ class ( Monad (m ss nn)
   getLastCheckpointState :: (MonadIO z) => AWBState m ss nn -> z (Maybe (SegmentsState ss))
   getLastCheckpointState _ = pure Nothing
   -- return events since the last checkpoint, if any
-  loadEvents :: (MonadIO z) => (AWBSerialiseT m ss nn -> Either Text (WrappedEvent ss nn)) ->  AWBState m ss nn -> z (ConduitT i (WrappedEvent ss nn) (ResourceT IO) ())
+  loadEvents :: (MonadIO z) => (ConduitT (AWBSerialiseT m ss nn) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->  AWBState m ss nn -> z (ConduitT i (WrappedEvent ss nn) (ResourceT IO) ())
   loadEvents _ _ = pure $ yieldMany []
   handleUpdateEvent :: (IsValidEvent ss nn n, MonadIO z, AcidWorldUpdate u ss) => (StorableEvent ss nn n -> AWBSerialiseT m ss nn) ->  (AWBState m ss nn) -> (AWUState u ss) -> Event n -> z (EventResult n)

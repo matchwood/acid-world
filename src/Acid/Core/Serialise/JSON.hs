@@ -21,6 +21,7 @@ import Data.Aeson(FromJSON(..), ToJSON(..), Value(..), Object)
 
 import Acid.Core.Event
 import Acid.Core.Serialise.Abstract
+import Conduit
 
 {-
 implementation of a json serialiser
@@ -33,14 +34,20 @@ instance AcidSerialiseEvent AcidSerialiserJSON where
   type AcidSerialiseParsers AcidSerialiserJSON ss nn = HM.HashMap Text (Object -> Either Text (WrappedEvent ss nn))
   acidSerialiseMakeParsers _ _ _ = makeJSONParsers
   acidSerialiseEvent _ se = Aeson.encode se
-  acidDeserialiseEvent  _ ps bs = do
-    (hm :: HM.HashMap Text Value) <- left (T.pack) $ Aeson.eitherDecode' bs
-    case HM.lookup "n" hm of
-      Just (String s) -> do
-        case HM.lookup s ps of
-          Nothing -> fail $ "Could not find parser for event named " <> show s
-          Just p -> p hm
-      _ -> fail $ "Expected to find a text n key in value " <> show hm
+  acidDeserialiseEvent :: forall ss nn. AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
+  acidDeserialiseEvent  _ ps =
+        linesUnboundedAsciiC .|
+          mapC deserialiser
+    where
+      deserialiser :: BL.ByteString -> Either Text (WrappedEvent ss nn )
+      deserialiser bs = do
+        (hm :: HM.HashMap Text Value) <- left (T.pack) $ Aeson.eitherDecode' bs
+        case HM.lookup "n" hm of
+          Just (String s) -> do
+            case HM.lookup s ps of
+              Nothing -> fail $ "Could not find parser for event named " <> show s
+              Just p -> p hm
+          _ -> fail $ "Expected to find a text n key in value " <> show hm
 
 instance AcidSerialiseC AcidSerialiserJSON n where
   type AcidSerialiseConstraint AcidSerialiserJSON n = (All ToJSON (EventArgs n), All FromJSON (EventArgs n))

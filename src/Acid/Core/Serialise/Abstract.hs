@@ -11,6 +11,7 @@ import Data.Proxy(Proxy(..))
 
 import Acid.Core.Event
 
+import Conduit
 
 
 {-
@@ -22,10 +23,10 @@ class AcidSerialiseEvent t where
   data AcidSerialiseEventOptions t :: *
   type AcidSerialiseT t :: *
   type AcidSerialiseParsers t (ss :: [Symbol]) (nn :: [Symbol]) :: *
-  acidSerialiseMakeParsers :: (ValidEventNames ss nn, AcidDeserialiseConstraint t ss nn) => AcidSerialiseEventOptions t -> Proxy ss -> Proxy nn ->AcidSerialiseParsers t ss nn
+  acidSerialiseMakeParsers :: (ValidEventNames ss nn, AcidDeserialiseConstraint t ss nn) => AcidSerialiseEventOptions t -> Proxy ss -> Proxy nn -> AcidSerialiseParsers t ss nn
 
   acidSerialiseEvent :: (AcidSerialiseConstraint t n) => AcidSerialiseEventOptions t -> StorableEvent ss nn n -> AcidSerialiseT t
-  acidDeserialiseEvent :: ValidEventNames ss nn => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> AcidSerialiseT t -> Either Text (WrappedEvent ss nn)
+  acidDeserialiseEvent :: AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> (ConduitT (AcidSerialiseT t) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
 
 class AcidSerialiseC t n where
   type AcidSerialiseConstraint t n :: Constraint
