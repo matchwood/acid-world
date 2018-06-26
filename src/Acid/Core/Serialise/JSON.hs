@@ -83,6 +83,8 @@ fromJSONEither v =
     (Aeson.Success a) -> pure a
     (Aeson.Error e) -> fail e
 
+
+
 instance (All ToJSON (EventArgs n)) => ToJSON (StorableEvent ss nn n) where
   toJSON (StorableEvent t ui (Event xs :: Event n)) = Object $ HM.fromList [
     ("n", toJSON (toUniqueText (Proxy :: Proxy n))),
