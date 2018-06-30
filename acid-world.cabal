@@ -39,7 +39,8 @@ library
     stm,
     uuid,
     conduit,
-    serialise
+    serialise,
+    cborg
 
 
   hs-source-dirs:      src
@@ -121,6 +122,8 @@ test-suite acid-world-test
                      , quickcheck-instances
                      , ixset-typed
                      , filepath
+                     , serialise
+
   default-language:    Haskell2010
   default-extensions:  AutoDeriveTypeable
                        BangPatterns
@@ -195,6 +198,8 @@ benchmark acid-world-benchmark
                      , quickcheck-instances
                      , ixset-typed
                      , filepath
+                     , serialise
+
   default-language:    Haskell2010
   default-extensions:  AutoDeriveTypeable
                        BangPatterns

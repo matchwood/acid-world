@@ -31,11 +31,11 @@ data AcidSerialiserJSON
 instance AcidSerialiseEvent AcidSerialiserJSON where
   data AcidSerialiseEventOptions AcidSerialiserJSON = AcidSerialiserJSONOptions
   type AcidSerialiseT AcidSerialiserJSON = BL.ByteString
-  type AcidSerialiseParsers AcidSerialiserJSON ss nn = HM.HashMap Text (Object -> Either Text (WrappedEvent ss nn))
+  data AcidSerialiseParsers AcidSerialiserJSON ss nn = AcidSerialiseParsersJSON (HM.HashMap Text (Object -> Either Text (WrappedEvent ss nn)))
   acidSerialiseMakeParsers _ _ _ = makeJSONParsers
   acidSerialiseEvent _ se = Aeson.encode se
-  acidDeserialiseEvent :: forall ss nn. AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
-  acidDeserialiseEvent  _ ps =
+  acidDeserialiseEvents :: forall ss nn. AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
+  acidDeserialiseEvents  _ (AcidSerialiseParsersJSON ps) =
         linesUnboundedAsciiC .|
           mapC deserialiser
     where
@@ -55,25 +55,28 @@ instance AcidSerialiseC AcidSerialiserJSON n where
 class (All FromJSON (EventArgs n)) => EventFromJSON n
 instance (All FromJSON (EventArgs n)) => EventFromJSON n
 
+class (ValidEventName ss n, EventFromJSON n) => ValidEventNameAndFromJSON ss n
+instance (ValidEventName ss n, EventFromJSON n) => ValidEventNameAndFromJSON ss n
+
+
 instance AcidDeserialiseC AcidSerialiserJSON ss nn where
   type AcidDeserialiseConstraint AcidSerialiserJSON ss nn = All (ValidEventNameAndFromJSON ss) nn
 
-class (ValidEventName ss n, EventFromJSON n) => ValidEventNameAndFromJSON ss n
-instance (ValidEventName ss n, EventFromJSON n) => ValidEventNameAndFromJSON ss n
+
 
 
 makeJSONParsers :: forall ss nn. (All (ValidEventNameAndFromJSON ss) nn) => AcidSerialiseParsers AcidSerialiserJSON ss nn
 makeJSONParsers =
   let (wres) = cfoldMap_NP (Proxy :: Proxy (ValidEventNameAndFromJSON ss)) (\p -> [toTaggedTuple p]) proxyRec
-  in HM.fromList wres
+  in AcidSerialiseParsersJSON $ HM.fromList wres
   where
     proxyRec :: NP Proxy nn
     proxyRec = pure_NP Proxy
     toTaggedTuple :: (ValidEventName ss n, EventFromJSON n) => Proxy n -> (Text, Object -> Either Text (WrappedEvent ss nn))
-    toTaggedTuple p = (toUniqueText p, decodeWrappedEvent p)
+    toTaggedTuple p = (toUniqueText p, decodeWrappedEventJSON p)
 
-decodeWrappedEvent :: forall n ss nn. (ValidEventName ss n, EventFromJSON n) => Proxy n -> Object -> Either Text (WrappedEvent ss nn)
-decodeWrappedEvent _ hm = do
+decodeWrappedEventJSON :: forall n ss nn. (ValidEventName ss n, EventFromJSON n) => Proxy n -> Object -> Either Text (WrappedEvent ss nn)
+decodeWrappedEventJSON _ hm = do
   ((WrappedEventT wr) :: (WrappedEventT ss nn n))  <- fromJSONEither (Object hm)
   pure $ wr
 

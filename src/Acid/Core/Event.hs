@@ -16,6 +16,7 @@ import qualified Data.UUID.V4  as UUID
 
 import Acid.Core.Segment
 import Acid.Core.Utils
+import Data.Aeson(FromJSON(..), ToJSON(..))
 
 -- this is the class that events run in
 
@@ -66,6 +67,8 @@ class (ToUniqueText n, SListI (EventArgs n)) => Eventable (n :: k) where
 
 newtype EventArgsContainer xs = EventArgsContainer {eventArgsContainerNp ::  NP I xs}
 
+newtype EventId = EventId{uuidFromEventId :: UUID.UUID} deriving(ToJSON, FromJSON)
+
 data Event (n :: k) where
   Event :: (Eventable n, EventArgs n ~ xs) => EventArgsContainer xs -> Event n
 
@@ -78,7 +81,7 @@ mkEvent _  = npICurry (Event . EventArgsContainer :: NP I xs -> Event n)
 
 data StorableEvent ss nn n = StorableEvent {
     storableEventTime :: Time.UTCTime,
-    storableEventId :: UUID.UUID,
+    storableEventId :: EventId,
     storableEventEvent :: Event n
   }
 
@@ -86,12 +89,12 @@ mkStorableEvent :: (MonadIO m) => Event n -> m (StorableEvent ss nn n)
 mkStorableEvent e = do
   t <- Time.getCurrentTime
   uuid <- liftIO $ UUID.nextRandom
-  return $ StorableEvent t uuid e
+  return $ StorableEvent t (EventId uuid) e
 
 data WrappedEvent ss nn where
   WrappedEvent :: (HasSegments ss (EventSegments n)) => {
     wrappedEventTime :: Time.UTCTime,
-    wrappedEventId :: UUID.UUID,
+    wrappedEventId :: EventId,
     wrappedEventEvent :: Event n} -> WrappedEvent ss nn
 
 newtype WrappedEventT ss nn n = WrappedEventT (WrappedEvent ss nn )

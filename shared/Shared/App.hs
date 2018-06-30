@@ -19,6 +19,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.IxSet.Typed as IxSet
 import qualified  System.FilePath as FilePath
 import Acid.World
+import Codec.Serialise
 
 (^*) :: Int -> Int -> Int
 (^*) = (^)
@@ -50,6 +51,7 @@ data User = User  {
   userDisabled :: !Bool
 } deriving (Eq, Show, Generic, Ord)
 
+instance Serialise User
 
 type UserIxs = '[Int, Maybe Time.UTCTime, Bool]
 type UserIxSet = IxSet.IxSet UserIxs User
@@ -154,6 +156,12 @@ openAppAcidWorldFresh = do
   t <- mkTempDir
   throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure AcidSerialiserJSONOptions
 
+type AppCBORAW = AcidWorld AppSegments AppEvents AcidSerialiserCBOR
+
+openAppAcidWorldCBORFresh :: IO AppCBORAW
+openAppAcidWorldCBORFresh = do
+  t <- mkTempDir
+  throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure AcidSerialiserCBOROptions
 
 closeAndReopen :: Middleware env
 closeAndReopen = reopenAcidWorld . closeAcidWorldMiddleware
