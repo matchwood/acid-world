@@ -33,7 +33,7 @@ instance AcidSerialiseEvent AcidSerialiserJSON where
   type AcidSerialiseT AcidSerialiserJSON = BL.ByteString
   data AcidSerialiseParsers AcidSerialiserJSON ss nn = AcidSerialiseParsersJSON (HM.HashMap Text (Object -> Either Text (WrappedEvent ss nn)))
   acidSerialiseMakeParsers _ _ _ = makeJSONParsers
-  acidSerialiseEvent _ se = Aeson.encode se
+  acidSerialiseEvent _ se = (Aeson.encode se) <> "\n"
   acidDeserialiseEvents :: forall ss nn. AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
   acidDeserialiseEvents  _ (AcidSerialiseParsersJSON ps) =
         linesUnboundedAsciiC .|

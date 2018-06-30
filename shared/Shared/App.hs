@@ -3,6 +3,8 @@
 module Shared.App where
 
 import RIO
+import qualified  RIO.ByteString.Lazy as BL
+
 import Prelude(userError, putStrLn)
 import qualified RIO.Text as T
 import qualified RIO.Time as Time
@@ -112,9 +114,9 @@ generateUsers i = do
 type AppSegments = '["Users"]
 type AppEvents = '["insertUser", "fetchUsers", "fetchUsersStats"]
 
-type AppAW = AcidWorld AppSegments AppEvents AcidSerialiserJSON
+type AppAW s = AcidWorld AppSegments AppEvents s
 
-type Middleware env = IO AppAW -> IO AppAW
+type Middleware s = IO (AppAW s) -> IO (AppAW s)
 
 
 mkTempDir :: IO (FilePath)
@@ -139,46 +141,39 @@ openAppAcidWorldWithDefaultState = do
 -}
 
 
-openAppAcidWorldRestoreState :: String -> IO AppAW
-openAppAcidWorldRestoreState s = do
+openAppAcidWorldRestoreState :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidDeserialiseConstraint s AppSegments AppEvents, AcidSerialiseConstraint s "fetchUsersStats" ) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
+openAppAcidWorldRestoreState opts s = do
   t <- mkTempDir
-  let e = topLevelStoredStateDir <> "/" <> "testState" <> s
+  let e = topLevelStoredStateDir <> "/" <> "testState" <> "/" <> s
   copyDirectory e t
-  aw <- throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure AcidSerialiserJSONOptions
+  aw <- throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure opts
   -- this is to force the internal state
   i <- runFetchUsersStats aw
   putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
   pure aw
 
 
-openAppAcidWorldFresh :: IO AppAW
-openAppAcidWorldFresh = do
+openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidDeserialiseConstraint s AppSegments AppEvents) => (AcidSerialiseEventOptions s) -> IO (AppAW s)
+openAppAcidWorldFresh opts = do
   t <- mkTempDir
-  throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure AcidSerialiserJSONOptions
+  throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure opts
 
-type AppCBORAW = AcidWorld AppSegments AppEvents AcidSerialiserCBOR
-
-openAppAcidWorldCBORFresh :: IO AppCBORAW
-openAppAcidWorldCBORFresh = do
-  t <- mkTempDir
-  throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure AcidSerialiserCBOROptions
-
-closeAndReopen :: Middleware env
+closeAndReopen :: Middleware s
 closeAndReopen = reopenAcidWorld . closeAcidWorldMiddleware
 
-closeAcidWorldMiddleware :: Middleware env
+closeAcidWorldMiddleware :: Middleware s
 closeAcidWorldMiddleware iAw = do
   aw <- iAw
   closeAcidWorld aw
   pure aw
 
-reopenAcidWorld :: Middleware env
+reopenAcidWorld :: Middleware s
 reopenAcidWorld iAw = do
   (AcidWorld{..}) <- iAw
   throwEither $ openAcidWorld Nothing (acidWorldBackendConfig) (acidWorldUpdateMonadConfig) acidWorldSerialiserOptions
 
 
-insertUsers :: Int -> Middleware env
+insertUsers :: AcidSerialiseConstraint s "insertUser" => Int -> Middleware s
 insertUsers i iAw = do
   aw <- iAw
   us <- generateUsers i
@@ -186,11 +181,11 @@ insertUsers i iAw = do
   pure aw
 
 
-runInsertUser :: AppAW -> User -> IO User
+runInsertUser :: AcidSerialiseConstraint s "insertUser" => AppAW s -> User -> IO User
 runInsertUser aw u = update aw (mkEvent (Proxy :: Proxy ("insertUser")) u)
 
 
-runFetchUsersStats :: AppAW -> IO Int
+runFetchUsersStats :: AcidSerialiseConstraint s "fetchUsersStats" => AppAW s -> IO Int
 runFetchUsersStats aw = update aw (mkEvent (Proxy :: Proxy ("fetchUsersStats")) )
 
 

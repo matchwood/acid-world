@@ -18,6 +18,7 @@ data AcidWorld  ss nn t where
                , AcidWorldUpdate uMonad ss
                , AcidSerialiseEvent t
                , AcidSerialiseT t ~ AWBSerialiseT bMonad ss nn
+               , AcidDeserialiseConstraint t ss nn
                ) => {
     acidWorldBackendConfig :: AWBConfig bMonad ss nn,
     acidWorldUpdateMonadConfig :: AWUConfig uMonad ss,

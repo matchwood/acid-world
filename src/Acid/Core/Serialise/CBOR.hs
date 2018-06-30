@@ -31,7 +31,7 @@ import Acid.Core.Event
 data AcidSerialiserCBOR
 
 
-type CBOREventParser ss nn = (BL.ByteString -> Either Text (Maybe (BS.ByteString, WrappedEvent ss nn)))
+type CBOREventParser ss nn = (BS.ByteString -> Either Text (Maybe (BS.ByteString, WrappedEvent ss nn)))
 instance AcidSerialiseEvent AcidSerialiserCBOR where
   data AcidSerialiseEventOptions AcidSerialiserCBOR = AcidSerialiserCBOROptions
   type AcidSerialiseT AcidSerialiserCBOR = BL.ByteString
@@ -39,10 +39,11 @@ instance AcidSerialiseEvent AcidSerialiserCBOR where
   acidSerialiseMakeParsers _ _ _ = makeCBORParsers
   acidSerialiseEvent _ se = serialise se
   acidDeserialiseEvents :: forall ss nn. AcidSerialiseEventOptions AcidSerialiserCBOR -> AcidSerialiseParsers AcidSerialiserCBOR ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
-  acidDeserialiseEvents  _ ps = start
+  acidDeserialiseEvents  _ ps = mapC BL.toStrict .| start
     where
-      start :: ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()
+      start :: ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()
       start = await >>= maybe (return ()) (loop Nothing)
+      loop :: (Maybe (CBOREventParser ss nn)) -> BS.ByteString ->  ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()
       loop Nothing t = do
         case findParserForWrappedEvent ps t of
           Left err -> yield (Left err) >> await >>= maybe (return ()) (loop Nothing)
@@ -51,7 +52,7 @@ instance AcidSerialiseEvent AcidSerialiserCBOR where
             case mt of
               Nothing -> yield $  Left $ "Unexpected end of conduit values when still looking for parser"
               Just nt -> loop Nothing (t <> nt)
-          Right (Just (bs, p)) -> (loop (Just p) (BL.fromStrict bs))
+          Right (Just (bs, p)) -> (loop (Just p) bs)
       loop (Just p) t =
         case p t of
           Left err -> yield (Left err) >> await >>= maybe (return ()) (loop Nothing)
@@ -60,7 +61,7 @@ instance AcidSerialiseEvent AcidSerialiserCBOR where
             case mt of
               Nothing -> yield $  Left $ "Unexpected end of conduit values when named event has only been partially parsed"
               Just nt -> loop (Just p) (t <> nt)
-          Right (Just (bs, e)) -> yield (Right e) >> (loop Nothing (BL.fromStrict bs))
+          Right (Just (bs, e)) -> yield (Right e) >> (if BS.null bs then  await >>= maybe (return ()) (loop Nothing) else loop Nothing bs)
 
 
 
@@ -77,11 +78,11 @@ instance AcidDeserialiseC AcidSerialiserCBOR ss nn where
 
 
 
-findParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserCBOR ss nn -> BL.ByteString -> Either Text (Maybe (BS.ByteString, CBOREventParser ss nn))
-findParserForWrappedEvent (AcidSerialiseParsersCBOR ps) t = trace (T.pack . show $ t) $ runST (supplyCurrentInput =<< CBOR.Read.deserialiseIncremental deserialiseNameAndFindParser)
+findParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserCBOR ss nn -> BS.ByteString -> Either Text (Maybe (BS.ByteString, CBOREventParser ss nn))
+findParserForWrappedEvent (AcidSerialiseParsersCBOR ps) t = runST (supplyCurrentInput =<< CBOR.Read.deserialiseIncremental deserialiseNameAndFindParser)
     where
       supplyCurrentInput :: IDecode s (CBOREventParser ss nn) -> ST s (Either Text (Maybe (BS.ByteString, CBOREventParser ss nn)))
-      supplyCurrentInput (CBOR.Read.Partial k) = handleEndOfCurrentInput =<< k (Just (BL.toStrict t))
+      supplyCurrentInput (CBOR.Read.Partial k) = handleEndOfCurrentInput =<< k (Just t)
       supplyCurrentInput a = handleEndOfCurrentInput a
 
       handleEndOfCurrentInput :: IDecode s (CBOREventParser ss nn) -> ST s (Either Text (Maybe (BS.ByteString, CBOREventParser ss nn)))
@@ -118,7 +119,7 @@ decodeWrappedEventCBOR :: forall n ss nn. (ValidEventName ss n, EventFromCBOR n)
 decodeWrappedEventCBOR _ t = runST (supplyCurrentInput =<< CBOR.Read.deserialiseIncremental deserialiseKnownEvent)
     where
       supplyCurrentInput :: IDecode s (WrappedEvent ss nn) -> ST s (Either Text (Maybe (BS.ByteString, WrappedEvent ss nn)))
-      supplyCurrentInput (CBOR.Read.Partial k) = handleEndOfCurrentInput =<< k (Just (BL.toStrict t))
+      supplyCurrentInput (CBOR.Read.Partial k) = handleEndOfCurrentInput =<< k (Just t)
       supplyCurrentInput a = handleEndOfCurrentInput a
 
       handleEndOfCurrentInput :: IDecode s (WrappedEvent ss nn) -> ST s (Either Text (Maybe (BS.ByteString, WrappedEvent ss nn)))

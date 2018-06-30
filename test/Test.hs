@@ -9,9 +9,9 @@ import Acid.World
 
 main :: IO ()
 main = do
-  aw@(AcidWorld{..}) <- openAppAcidWorldCBORFresh
-  --us <- generateUsers 1000
-  mapM_ (\u -> update aw (mkEvent (Proxy :: Proxy ("insertUser")) u)) (replicate 1000 sampleUser)
+{-  aw@(AcidWorld{..}) <- openAppAcidWorldCBORFresh
+  us <- generateUsers 100000
+  mapM_ (\u -> update aw (mkEvent (Proxy :: Proxy ("insertUser")) u)) us
   n <- update aw (mkEvent (Proxy :: Proxy ("fetchUsersStats")))
   traceM $ "Users inserted :: " <> (utf8BuilderToText $ displayShow n)
   closeAcidWorld aw
@@ -20,5 +20,5 @@ main = do
 
   n2 <- update aw (mkEvent (Proxy :: Proxy ("fetchUsersStats")))
   traceM $ "Users inserted after restore :: " <> (utf8BuilderToText $ displayShow n2)
-
+-}
   pure ()

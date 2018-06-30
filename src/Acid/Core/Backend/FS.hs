@@ -66,10 +66,10 @@ instance ( ValidSegmentNames ss
   handleUpdateEvent serializer awb awu (e :: Event n) = do
     let eventPath = makeEventPath (aWBConfigBackendFSStateDir . sWBStateBackendConfig $ awb)
     stE <- mkStorableEvent e
-    BL.appendFile eventPath (serializer stE <> "\n")
+    BL.appendFile eventPath (serializer stE)
 
     let (AcidWorldBackendFS m :: AcidWorldBackendFS ss nn (EventResult n)) = runUpdateEvent awu e
     liftIO $ m
 
 makeEventPath :: FilePath -> FilePath
-makeEventPath fp = fp <> "/" <> "events.json"
+makeEventPath fp = fp <> "/" <> "events"
