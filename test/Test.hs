@@ -5,10 +5,17 @@ import Shared.App
 import RIO
 import Data.Proxy(Proxy(..))
 import Acid.World
-
+import Test.Tasty
 
 main :: IO ()
 main = do
+  defaultMain tests
+
+tests :: TestTree
+tests = testGroup "Tests" [
+      serialiserTests AcidSerialiserJSONOptions,
+      serialiserTests AcidSerialiserCBOROptions
+   ]
 {-  aw@(AcidWorld{..}) <- openAppAcidWorldCBORFresh
   us <- generateUsers 100000
   mapM_ (\u -> update aw (mkEvent (Proxy :: Proxy ("insertUser")) u)) us
@@ -21,4 +28,6 @@ main = do
   n2 <- update aw (mkEvent (Proxy :: Proxy ("fetchUsersStats")))
   traceM $ "Users inserted after restore :: " <> (utf8BuilderToText $ displayShow n2)
 -}
-  pure ()
+
+serialiserTests :: AcidSerialiseEventOptions s -> TestTree
+serialiserTests = undefined

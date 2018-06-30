@@ -44,24 +44,16 @@ instance ( ValidSegmentNames ss
     let eventPath = makeEventPath (aWBConfigBackendFSStateDir . sWBStateBackendConfig $ s)
 
 
-    let blSrc =
+    pure $
          sourceFile eventPath .|
          mapC BL.fromStrict .|
          deserialiseConduit .|
          mapMC throwOnEither
-    pure blSrc
-
     where
-
-
       throwOnEither :: (MonadThrow m) => Either Text a -> m a
       throwOnEither (Left t) = throwM $ userError (T.unpack t)
       throwOnEither (Right a) = pure a
-    {-
-    a <- liftIO $ runConduitRes blSrc
 
-    pure $ sequence a
--}
   -- this should be bracketed and so forth @todo
   handleUpdateEvent serializer awb awu (e :: Event n) = do
     let eventPath = makeEventPath (aWBConfigBackendFSStateDir . sWBStateBackendConfig $ awb)
