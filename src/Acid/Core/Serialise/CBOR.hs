@@ -31,19 +31,21 @@ import Acid.Core.Event
 data AcidSerialiserCBOR
 
 
+
 type CBOREventParser ss nn = (BS.ByteString -> Either Text (Maybe (BS.ByteString, WrappedEvent ss nn)))
 instance AcidSerialiseEvent AcidSerialiserCBOR where
   data AcidSerialiseEventOptions AcidSerialiserCBOR = AcidSerialiserCBOROptions
   type AcidSerialiseT AcidSerialiserCBOR = BL.ByteString
   data AcidSerialiseParsers AcidSerialiserCBOR ss nn = AcidSerialiseParsersCBOR (HM.HashMap Text (CBOREventParser ss nn))
+  serialiserName _ = "CBOR"
   acidSerialiseMakeParsers _ _ _ = makeCBORParsers
   acidSerialiseEvent _ se = serialise se
-  acidDeserialiseEvents :: forall ss nn. AcidSerialiseEventOptions AcidSerialiserCBOR -> AcidSerialiseParsers AcidSerialiserCBOR ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
+  acidDeserialiseEvents :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserCBOR -> AcidSerialiseParsers AcidSerialiserCBOR ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
   acidDeserialiseEvents  _ ps = mapC BL.toStrict .| start
     where
-      start :: ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()
+      start :: ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ()
       start = await >>= maybe (return ()) (loop Nothing)
-      loop :: (Maybe (CBOREventParser ss nn)) -> BS.ByteString ->  ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()
+      loop :: (Maybe (CBOREventParser ss nn)) -> BS.ByteString ->  ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ()
       loop Nothing t = do
         case findParserForWrappedEvent ps t of
           Left err -> yield (Left err) >> await >>= maybe (return ()) (loop Nothing)

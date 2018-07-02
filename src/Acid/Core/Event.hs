@@ -5,9 +5,11 @@
 module Acid.Core.Event where
 import RIO
 import qualified  RIO.Text as T
+import qualified  RIO.List as L
 import qualified  RIO.Time as Time
 
 import Generics.SOP
+import Generics.SOP.NP
 import GHC.TypeLits
 
 
@@ -56,7 +58,7 @@ type EventableR n xs r =
 
 
 
-class (ToUniqueText n, SListI (EventArgs n)) => Eventable (n :: k) where
+class (ToUniqueText n, SListI (EventArgs n), All Eq (EventArgs n), All Show (EventArgs n)) => Eventable (n :: k) where
   type EventArgs n :: [*]
   type EventResult n :: *
   type EventSegments n :: [Symbol]
@@ -67,10 +69,28 @@ class (ToUniqueText n, SListI (EventArgs n)) => Eventable (n :: k) where
 
 newtype EventArgsContainer xs = EventArgsContainer {eventArgsContainerNp ::  NP I xs}
 
-newtype EventId = EventId{uuidFromEventId :: UUID.UUID} deriving(ToJSON, FromJSON)
+instance (All Show xs) => Show (EventArgsContainer xs) where
+  show (EventArgsContainer np) = L.intercalate ", " $ cfoldMap_NP (Proxy :: Proxy Show) ((:[]) . show . unI) np
+
+instance (All Eq xs) => Eq (EventArgsContainer xs) where
+  (==) (EventArgsContainer np1) (EventArgsContainer np2) = and . collapse_NP $ czipWith_NP (Proxy :: Proxy Eq) (\ia ib -> K $ ia == ib) np1 np2
+
+
+
+
+newtype EventId = EventId{uuidFromEventId :: UUID.UUID} deriving(Show, Eq, ToJSON, FromJSON)
 
 data Event (n :: k) where
-  Event :: (Eventable n, EventArgs n ~ xs) => EventArgsContainer xs -> Event n
+  Event :: (Eventable n, EventArgs n ~ xs, All Eq xs, All Show xs) => EventArgsContainer xs -> Event n
+
+
+instance Show (Event n) where
+  show (Event c) = "Event :: " ++ (T.unpack $ toUniqueText (Proxy :: Proxy n)) ++ "\n with args::" ++ show c
+
+
+instance Eq (Event n) where
+  (==) (Event c) (Event c1) = c == c1
+
 
 toRunEvent :: NPCurried ts a -> EventArgsContainer ts -> a
 toRunEvent f  = npIUncurry f . eventArgsContainerNp
@@ -83,7 +103,7 @@ data StorableEvent ss nn n = StorableEvent {
     storableEventTime :: Time.UTCTime,
     storableEventId :: EventId,
     storableEventEvent :: Event n
-  }
+  } deriving (Eq, Show)
 
 mkStorableEvent :: (MonadIO m) => Event n -> m (StorableEvent ss nn n)
 mkStorableEvent e = do
