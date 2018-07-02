@@ -28,16 +28,17 @@ implementation of a json serialiser
 -}
 data AcidSerialiserJSON
 
+
 instance AcidSerialiseEvent AcidSerialiserJSON where
   data AcidSerialiseEventOptions AcidSerialiserJSON = AcidSerialiserJSONOptions
   type AcidSerialiseT AcidSerialiserJSON = BL.ByteString
-  data AcidSerialiseParsers AcidSerialiserJSON ss nn = AcidSerialiseParsersJSON (HM.HashMap Text (Object -> Either Text (WrappedEvent ss nn)))
+  type AcidSerialiseParser AcidSerialiserJSON ss nn = (Object -> Either Text (WrappedEvent ss nn))
   serialiserName _ = "JSON"
-  acidSerialiseMakeParsers _ _ _ = makeJSONParsers
-  acidSerialiseEvent _ se = (Aeson.encode se) <> "\n"
-  acidDeserialiseEvent _ t = left (T.pack) $ (Aeson.eitherDecode' t)
-  acidDeserialiseEvents :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
-  acidDeserialiseEvents  _ (AcidSerialiseParsersJSON ps) =
+  serialiseEvent _ se = (Aeson.encode se) <> "\n"
+  deserialiseEvent _ t = left (T.pack) $ (Aeson.eitherDecode' t)
+  makeDeserialiseParsers _ _ _ = makeJSONParsers
+  deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
+  deserialiseEventStream  _ ps =
         linesUnboundedAsciiC .|
           mapC deserialiser
     where
@@ -51,33 +52,27 @@ instance AcidSerialiseEvent AcidSerialiserJSON where
               Just p -> p hm
           _ -> fail $ "Expected to find a text n key in value " <> show hm
 
-instance AcidSerialiseC AcidSerialiserJSON ss nn n where
-  type AcidSerialiseConstraint AcidSerialiserJSON ss nn n = (All ToJSON (EventArgs n), All FromJSON (EventArgs n))
-
-class (All FromJSON (EventArgs n)) => EventFromJSON n
-instance (All FromJSON (EventArgs n)) => EventFromJSON n
-
-class (ValidEventName ss n, EventFromJSON n) => ValidEventNameAndFromJSON ss n
-instance (ValidEventName ss n, EventFromJSON n) => ValidEventNameAndFromJSON ss n
 
 
-instance AcidDeserialiseC AcidSerialiserJSON ss nn where
-  type AcidDeserialiseConstraint AcidSerialiserJSON ss nn = All (ValidEventNameAndFromJSON ss) nn
+class (ValidEventName ss n, All FromJSON (EventArgs n), All ToJSON (EventArgs n)) => CanSerialiseJSON ss n
+instance (ValidEventName ss n, All FromJSON (EventArgs n), All ToJSON (EventArgs n)) => CanSerialiseJSON ss n
+
+instance AcidSerialiseC AcidSerialiserJSON where
+  type AcidSerialiseConstraint AcidSerialiserJSON ss n = CanSerialiseJSON ss n
+  type AcidSerialiseConstraintAll AcidSerialiserJSON ss nn = All (CanSerialiseJSON ss) nn
 
 
-
-
-makeJSONParsers :: forall ss nn. (All (ValidEventNameAndFromJSON ss) nn) => AcidSerialiseParsers AcidSerialiserJSON ss nn
+makeJSONParsers :: forall ss nn. (All (CanSerialiseJSON ss) nn) => AcidSerialiseParsers AcidSerialiserJSON ss nn
 makeJSONParsers =
-  let (wres) = cfoldMap_NP (Proxy :: Proxy (ValidEventNameAndFromJSON ss)) (\p -> [toTaggedTuple p]) proxyRec
-  in AcidSerialiseParsersJSON $ HM.fromList wres
+  let (wres) = cfoldMap_NP (Proxy :: Proxy (CanSerialiseJSON ss)) (\p -> [toTaggedTuple p]) proxyRec
+  in HM.fromList wres
   where
     proxyRec :: NP Proxy nn
     proxyRec = pure_NP Proxy
-    toTaggedTuple :: (ValidEventName ss n, EventFromJSON n) => Proxy n -> (Text, Object -> Either Text (WrappedEvent ss nn))
+    toTaggedTuple :: (CanSerialiseJSON ss n) => Proxy n -> (Text, Object -> Either Text (WrappedEvent ss nn))
     toTaggedTuple p = (toUniqueText p, decodeWrappedEventJSON p)
 
-decodeWrappedEventJSON :: forall n ss nn. (ValidEventName ss n, EventFromJSON n) => Proxy n -> Object -> Either Text (WrappedEvent ss nn)
+decodeWrappedEventJSON :: forall n ss nn. (CanSerialiseJSON ss n) => Proxy n -> Object -> Either Text (WrappedEvent ss nn)
 decodeWrappedEventJSON _ hm = do
   (se :: (StorableEvent ss nn n))  <- fromJSONEither (Object hm)
   pure $ WrappedEvent se
@@ -102,7 +97,7 @@ instance (All ToJSON xs) => ToJSON (EventArgsContainer xs) where
     toJSON $ collapse_NP $ cmap_NP (Proxy :: Proxy ToJSON) (K . toJSON . unI) np
 
 
-instance (ValidEventNameAndFromJSON ss n, EventArgs n ~ xs) => FromJSON (StorableEvent ss nn n) where
+instance (CanSerialiseJSON ss n, EventArgs n ~ xs) => FromJSON (StorableEvent ss nn n) where
   parseJSON = Aeson.withObject "WrappedEventT" $ \o -> do
     t <- o Aeson..: "t"
     uid <- o Aeson..: "i"

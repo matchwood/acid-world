@@ -18,7 +18,7 @@ data AcidWorld  ss nn t where
                , AcidWorldUpdate uMonad ss
                , AcidSerialiseEvent t
                , AcidSerialiseT t ~ AWBSerialiseT bMonad ss nn
-               , AcidDeserialiseConstraint t ss nn
+               , AcidSerialiseConstraintAll t ss nn
                ) => {
     acidWorldBackendConfig :: AWBConfig bMonad ss nn,
     acidWorldUpdateMonadConfig :: AWUConfig uMonad ss,
@@ -36,7 +36,7 @@ openAcidWorld :: forall m ss nn bMonad uMonad t.
                , AcidWorldUpdate uMonad ss
                , AcidSerialiseEvent t
                , AcidSerialiseT t ~ AWBSerialiseT bMonad ss nn
-               , AcidDeserialiseConstraint t ss nn
+               , AcidSerialiseConstraintAll t ss nn
                ) => Maybe (SegmentsState ss) -> AWBConfig bMonad ss nn -> AWUConfig uMonad ss -> AcidSerialiseEventOptions t ->  m (Either Text (AcidWorld ss nn t))
 openAcidWorld mDefSt acidWorldBackendConfig acidWorldUpdateMonadConfig acidWorldSerialiserOptions = do
   let defState = fromMaybe (defaultSegmentsState (Proxy :: Proxy ss)) mDefSt
@@ -44,9 +44,9 @@ openAcidWorld mDefSt acidWorldBackendConfig acidWorldUpdateMonadConfig acidWorld
   case eAcidWorldBackendState of
     Left err -> pure . Left $ err
     Right acidWorldBackendState -> do
-      let parsers = acidSerialiseMakeParsers acidWorldSerialiserOptions (Proxy :: Proxy ss) (Proxy :: Proxy nn)
+      let parsers = makeDeserialiseParsers acidWorldSerialiserOptions (Proxy :: Proxy ss) (Proxy :: Proxy nn)
       let handles = BackendHandles {
-              bhLoadEvents = loadEvents (acidDeserialiseEvents acidWorldSerialiserOptions parsers) acidWorldBackendState,
+              bhLoadEvents = loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState,
               bhGetLastCheckpointState = getLastCheckpointState acidWorldBackendState
             }
 
@@ -61,8 +61,8 @@ closeAcidWorld (AcidWorld {..}) = do
   closeUpdate acidWorldUpdateState
 
 
-update :: (IsValidEvent ss nn n, MonadIO m, AcidSerialiseConstraint t ss nn n) => AcidWorld ss nn t -> Event n -> m (EventResult n)
-update (AcidWorld {..}) = handleUpdateEvent (acidSerialiseEvent acidWorldSerialiserOptions)  acidWorldBackendState acidWorldUpdateState
+update :: (IsValidEvent ss nn n, MonadIO m, AcidSerialiseConstraint t ss n) => AcidWorld ss nn t -> Event n -> m (EventResult n)
+update (AcidWorld {..}) = handleUpdateEvent (serialiseEvent acidWorldSerialiserOptions)  acidWorldBackendState acidWorldUpdateState
 
 
 

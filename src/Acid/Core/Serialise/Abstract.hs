@@ -3,6 +3,8 @@ module Acid.Core.Serialise.Abstract  where
 
 
 import RIO
+import qualified  RIO.HashMap as HM
+import qualified  RIO.Text as T
 
 import GHC.TypeLits
 import GHC.Exts (Constraint)
@@ -22,18 +24,35 @@ import Conduit
 class AcidSerialiseEvent t where
   data AcidSerialiseEventOptions t :: *
   type AcidSerialiseT t :: *
-  data AcidSerialiseParsers t (ss :: [Symbol]) (nn :: [Symbol]) :: *
+  type AcidSerialiseParser t (ss :: [Symbol]) (nn :: [Symbol]) :: *
   serialiserName :: Proxy t -> Text
-  acidSerialiseMakeParsers :: (ValidEventNames ss nn, AcidDeserialiseConstraint t ss nn) => AcidSerialiseEventOptions t -> Proxy ss -> Proxy nn -> AcidSerialiseParsers t ss nn
-
-  acidSerialiseEvent :: (AcidSerialiseConstraint t ss nn n) => AcidSerialiseEventOptions t -> StorableEvent ss nn n -> AcidSerialiseT t
-  acidDeserialiseEvents :: (Monad m) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> (ConduitT (AcidSerialiseT t) (Either Text (WrappedEvent ss nn)) (m) ())
-  acidDeserialiseEvent :: AcidSerialiseEventOptions t -> AcidSerialiseT t -> (Either Text (StorableEvent ss nn n))
-
-class AcidSerialiseC t (ss :: [Symbol]) (nn :: [Symbol]) (n :: Symbol) where
-  type AcidSerialiseConstraint t ss nn n :: Constraint
+  serialiseEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> StorableEvent ss nn n -> AcidSerialiseT t
+  deserialiseEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> (Either Text (StorableEvent ss nn n))
+  makeDeserialiseParsers :: (ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn) => AcidSerialiseEventOptions t -> Proxy ss -> Proxy nn -> AcidSerialiseParsers t ss nn
+  deserialiseEventStream :: (Monad m) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> (ConduitT (AcidSerialiseT t) (Either Text (WrappedEvent ss nn)) (m) ())
 
 
-class AcidDeserialiseC t (ss :: [Symbol]) (nn :: [Symbol]) where
-  type AcidDeserialiseConstraint t ss nn :: Constraint
 
+class AcidSerialiseC t where
+  type AcidSerialiseConstraint t (ss :: [Symbol]) (n :: Symbol) :: Constraint
+  type AcidSerialiseConstraintAll t (ss :: [Symbol]) (nn :: [Symbol]) :: Constraint
+
+type AcidSerialiseParsers t ss nn = HM.HashMap Text (AcidSerialiseParser t ss nn)
+
+{-lookupParser :: (AcidSerialiseEvent t) =>  Proxy t -> Proxy ss -> Proxy nn -> Text -> AcidSerialiseParsers t ss nn -> Either Text (AcidSerialiseParser t ss nn)
+lookupParser tp _ _ name ps =
+  case HM.lookup name ps of
+    Nothing -> Left $ "Could not find parser for event named " <>  name <> " for serialiser " <> serialiserName tp
+    Just p -> pure p-}
+
+
+deserialiseWrappedEvent :: forall t ss (nn :: [Symbol]). (AcidSerialiseEvent t, ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> Either Text (WrappedEvent ss nn)
+deserialiseWrappedEvent o s = deserialiseWrappedEventWithParsers o (makeDeserialiseParsers o (Proxy :: Proxy ss) (Proxy :: Proxy nn)) s
+
+deserialiseWrappedEventWithParsers :: (AcidSerialiseEvent t) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> AcidSerialiseT t -> Either Text (WrappedEvent ss nn)
+deserialiseWrappedEventWithParsers o ps s =
+  case runIdentity . runConduit $ yieldMany [s] .| (deserialiseEventStream o ps) .| sinkList of
+    [] -> Left "Expected to deserialise one event, got none"
+    [Left err] -> Left err
+    [Right a] -> Right a
+    xs -> Left $ "Expected to deserialise one event, got " <> (T.pack (show (length xs)))

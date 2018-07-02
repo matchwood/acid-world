@@ -11,6 +11,7 @@ implementation of a cbor serialiser
 import RIO
 import qualified  RIO.HashMap as HM
 import qualified  RIO.Text as T
+import qualified  RIO.List as L
 
 import Acid.Core.Serialise.Abstract
 import qualified  RIO.ByteString.Lazy as BL
@@ -22,7 +23,7 @@ import Codec.Serialise.Decoding
 import Generics.SOP
 import Generics.SOP.NP
 import qualified Data.UUID  as UUID
-
+import Control.Arrow (left)
 import Control.Monad.ST
 import Conduit
 
@@ -36,12 +37,13 @@ type CBOREventParser ss nn = (BS.ByteString -> Either Text (Maybe (BS.ByteString
 instance AcidSerialiseEvent AcidSerialiserCBOR where
   data AcidSerialiseEventOptions AcidSerialiserCBOR = AcidSerialiserCBOROptions
   type AcidSerialiseT AcidSerialiserCBOR = BL.ByteString
-  data AcidSerialiseParsers AcidSerialiserCBOR ss nn = AcidSerialiseParsersCBOR (HM.HashMap Text (CBOREventParser ss nn))
+  type AcidSerialiseParser AcidSerialiserCBOR ss nn = CBOREventParser ss nn
   serialiserName _ = "CBOR"
-  acidSerialiseMakeParsers _ _ _ = makeCBORParsers
-  acidSerialiseEvent _ se = serialise se
-  acidDeserialiseEvents :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserCBOR -> AcidSerialiseParsers AcidSerialiserCBOR ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
-  acidDeserialiseEvents  _ ps = mapC BL.toStrict .| start
+  serialiseEvent _ se = serialise se
+  deserialiseEvent _ bs = left (T.pack . show) $ deserialiseOrFail bs
+  makeDeserialiseParsers _ _ _ = makeCBORParsers
+  deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserCBOR -> AcidSerialiseParsers AcidSerialiserCBOR ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
+  deserialiseEventStream  _ ps = mapC BL.toStrict .| start
     where
       start :: ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ()
       start = await >>= maybe (return ()) (loop Nothing)
@@ -69,23 +71,19 @@ instance AcidSerialiseEvent AcidSerialiserCBOR where
 
 
 
-class (All Serialise (EventArgs n)) => EventFromCBOR n
-instance (All Serialise (EventArgs n)) => EventFromCBOR n
-
-class (ValidEventName ss n, EventFromCBOR n) => ValidEventNameAndFromCBOR ss n
-instance (ValidEventName ss n, EventFromCBOR n) => ValidEventNameAndFromCBOR ss n
+class (ValidEventName ss n, All Serialise (EventArgs n)) => CanSerialiseCBOR ss n
+instance (ValidEventName ss n, All Serialise (EventArgs n)) => CanSerialiseCBOR ss n
 
 
-instance AcidSerialiseC AcidSerialiserCBOR ss nn n where
-  type AcidSerialiseConstraint AcidSerialiserCBOR ss nn n = (All Serialise (EventArgs n), ValidEventNameAndFromCBOR ss n)
+instance AcidSerialiseC AcidSerialiserCBOR where
+  type AcidSerialiseConstraint AcidSerialiserCBOR ss n = CanSerialiseCBOR ss n
+  type AcidSerialiseConstraintAll AcidSerialiserCBOR ss nn = All (CanSerialiseCBOR ss) nn
 
-instance AcidDeserialiseC AcidSerialiserCBOR ss nn where
-  type AcidDeserialiseConstraint AcidSerialiserCBOR ss nn = All (ValidEventNameAndFromCBOR ss) nn
 
 
 
 findParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserCBOR ss nn -> BS.ByteString -> Either Text (Maybe (BS.ByteString, CBOREventParser ss nn))
-findParserForWrappedEvent (AcidSerialiseParsersCBOR ps) t = runST (supplyCurrentInput =<< CBOR.Read.deserialiseIncremental deserialiseNameAndFindParser)
+findParserForWrappedEvent ps t = runST (supplyCurrentInput =<< CBOR.Read.deserialiseIncremental deserialiseNameAndFindParser)
     where
       supplyCurrentInput :: IDecode s (CBOREventParser ss nn) -> ST s (Either Text (Maybe (BS.ByteString, CBOREventParser ss nn)))
       supplyCurrentInput (CBOR.Read.Partial k) = handleEndOfCurrentInput =<< k (Just t)
@@ -110,19 +108,19 @@ findParserForWrappedEvent (AcidSerialiseParsersCBOR ps) t = runST (supplyCurrent
 
 
 
-makeCBORParsers :: forall ss nn. (All (ValidEventNameAndFromCBOR ss) nn) => AcidSerialiseParsers AcidSerialiserCBOR ss nn
+makeCBORParsers :: forall ss nn. (All (CanSerialiseCBOR ss) nn) => AcidSerialiseParsers AcidSerialiserCBOR ss nn
 makeCBORParsers =
-  let (wres) = cfoldMap_NP (Proxy :: Proxy (ValidEventNameAndFromCBOR ss)) (\p -> [toTaggedTuple p]) proxyRec
-  in AcidSerialiseParsersCBOR $ HM.fromList wres
+  let (wres) = cfoldMap_NP (Proxy :: Proxy (CanSerialiseCBOR ss)) (\p -> [toTaggedTuple p]) proxyRec
+  in HM.fromList wres
   where
     proxyRec :: NP Proxy nn
     proxyRec = pure_NP Proxy
-    toTaggedTuple :: (ValidEventName ss n, EventFromCBOR n) => Proxy n -> (Text, CBOREventParser ss nn)
+    toTaggedTuple :: (CanSerialiseCBOR ss n) => Proxy n -> (Text, CBOREventParser ss nn)
     toTaggedTuple p = (toUniqueText p, decodeWrappedEventCBOR p)
 
 
-decodeWrappedEventCBOR :: forall n ss nn. (ValidEventName ss n, EventFromCBOR n) => Proxy n -> CBOREventParser ss nn
-decodeWrappedEventCBOR _ t = runST (supplyCurrentInput =<< CBOR.Read.deserialiseIncremental deserialiseKnownEvent)
+decodeWrappedEventCBOR :: forall n ss nn. (CanSerialiseCBOR ss n) => Proxy n -> CBOREventParser ss nn
+decodeWrappedEventCBOR _ t = runST (supplyCurrentInput =<< CBOR.Read.deserialiseIncremental doSerialiseWrappedEvent)
     where
       supplyCurrentInput :: IDecode s (WrappedEvent ss nn) -> ST s (Either Text (Maybe (BS.ByteString, WrappedEvent ss nn)))
       supplyCurrentInput (CBOR.Read.Partial k) = handleEndOfCurrentInput =<< k (Just t)
@@ -132,14 +130,15 @@ decodeWrappedEventCBOR _ t = runST (supplyCurrentInput =<< CBOR.Read.deserialise
       handleEndOfCurrentInput (CBOR.Read.Done bs _ x) = pure $ Right (Just (bs, x))
       handleEndOfCurrentInput (CBOR.Read.Partial _) = pure $ Right Nothing
       handleEndOfCurrentInput (CBOR.Read.Fail _ _ err) = pure $ Left (T.pack $ show err)
-      deserialiseKnownEvent :: Decoder s (WrappedEvent ss nn)
-      deserialiseKnownEvent = do
-        (se :: (StorableEvent ss nn n))  <- decode
+      doSerialiseWrappedEvent :: Decoder s (WrappedEvent ss nn)
+      doSerialiseWrappedEvent = do
+        (se :: StorableEvent ss nn n) <- deserialiseStorableEventBody
         pure $ WrappedEvent se
 
 
 
-instance (All Serialise (EventArgs n), ValidEventNameAndFromCBOR ss n) => Serialise (StorableEvent ss nn n) where
+
+instance (CanSerialiseCBOR ss n) => Serialise (StorableEvent ss nn n) where
   encode (StorableEvent t ui (Event xs :: Event n)) =
     encodeListLen 5 <>
     encodeWord 0 <>
@@ -148,12 +147,20 @@ instance (All Serialise (EventArgs n), ValidEventNameAndFromCBOR ss n) => Serial
     encode ui <>
     encode xs
   decode = do
+    let expectedName = toUniqueText (Proxy :: Proxy n)
+    len <- decodeListLen
+    tag <- decodeWord
+    name <- decode
+    case (len, tag, name == expectedName) of
+      (5, 0, True) -> deserialiseStorableEventBody
+      (_,_,_) -> fail $ "Expected (listLength, tag, eventName) of (5, 0, " <> T.unpack expectedName <> " but got (" <> L.intercalate ", " [show len, show tag, show name] <> ")"
+
+deserialiseStorableEventBody :: forall s ss nn n. (CanSerialiseCBOR ss n) => Decoder s (StorableEvent ss nn n)
+deserialiseStorableEventBody = do
     t <- decode
     uid <- decode
     args <- decode
-    return $ StorableEvent t uid ((Event args) :: Event n)
-
-
+    pure $ StorableEvent t uid ((Event args) :: Event n)
 
 instance Serialise EventId where
   encode = encodeBytes . BL.toStrict . UUID.toByteString . uuidFromEventId

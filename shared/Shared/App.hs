@@ -141,7 +141,7 @@ openAppAcidWorldWithDefaultState = do
 -}
 
 
-openAppAcidWorldRestoreState :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidDeserialiseConstraint s AppSegments AppEvents, AcidSerialiseConstraint s AppSegments AppEvents "fetchUsersStats" ) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
+openAppAcidWorldRestoreState :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, AcidSerialiseConstraint s AppSegments "fetchUsersStats" ) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
 openAppAcidWorldRestoreState opts s = do
   t <- mkTempDir
   let e = topLevelStoredStateDir <> "/" <> "testState" <> "/" <> s
@@ -153,7 +153,7 @@ openAppAcidWorldRestoreState opts s = do
   pure aw
 
 
-openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidDeserialiseConstraint s AppSegments AppEvents) => (AcidSerialiseEventOptions s) -> IO (AppAW s)
+openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => (AcidSerialiseEventOptions s) -> IO (AppAW s)
 openAppAcidWorldFresh opts = do
   t <- mkTempDir
   throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure opts
@@ -173,7 +173,7 @@ reopenAcidWorld iAw = do
   throwEither $ openAcidWorld Nothing (acidWorldBackendConfig) (acidWorldUpdateMonadConfig) acidWorldSerialiserOptions
 
 
-insertUsers :: AcidSerialiseConstraint s AppSegments AppEvents "insertUser" => Int -> Middleware s
+insertUsers :: AcidSerialiseConstraint s AppSegments "insertUser" => Int -> Middleware s
 insertUsers i iAw = do
   aw <- iAw
   us <- generateUsers i
@@ -181,11 +181,11 @@ insertUsers i iAw = do
   pure aw
 
 
-runInsertUser :: AcidSerialiseConstraint s AppSegments AppEvents "insertUser" => AppAW s -> User -> IO User
+runInsertUser :: AcidSerialiseConstraint s AppSegments "insertUser" => AppAW s -> User -> IO User
 runInsertUser aw u = update aw (mkEvent (Proxy :: Proxy ("insertUser")) u)
 
 
-runFetchUsersStats :: AcidSerialiseConstraint s  AppSegments AppEvents "fetchUsersStats" => AppAW s -> IO Int
+runFetchUsersStats :: AcidSerialiseConstraint s  AppSegments "fetchUsersStats" => AppAW s -> IO Int
 runFetchUsersStats aw = update aw (mkEvent (Proxy :: Proxy ("fetchUsersStats")) )
 
 
