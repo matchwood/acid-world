@@ -8,6 +8,8 @@ import Data.Proxy(Proxy(..))
 import Acid.World
 import Test.Tasty
 import Test.Tasty.QuickCheck
+import Test.Tasty.HUnit
+
 import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Property as QCP
 
@@ -25,7 +27,8 @@ serialiserTests :: forall s. (AcidSerialiseEvent s, AcidSerialiseConstraint s Ap
 serialiserTests o = testGroup "Serialiser" [
     testGroup (T.unpack $ serialiserName (Proxy :: Proxy s)) [
       testProperty "serialiseEventEqualDeserialise" $ prop_serialiseEventEqualDeserialise o,
-      testProperty "serialiseWrappedEventEqualDeserialise" $ prop_serialiseWrappedEventEqualDeserialise o
+      testProperty "serialiseWrappedEventEqualDeserialise" $ prop_serialiseWrappedEventEqualDeserialise o,
+      testCaseSteps "insertAndFetchState" $ unit_insertAndFetchState o
     ]
 
   ]
@@ -55,3 +58,9 @@ prop_serialiseWrappedEventEqualDeserialise o = forAll genStorableEvent $ \e ->
       Left r -> property $ QCP.failed {QCP.reason = T.unpack $ "Error encountered when deserialising: " <> r}
       (Right (e'  :: WrappedEvent AppSegments AppEvents)) -> show (WrappedEvent e) === show e'
 
+genUsers :: QC.Gen [User]
+genUsers = do
+  replicate i (QC.generate arbitrary)
+
+unit_insertAndFetchState :: forall s. (AcidSerialiseEvent s, AcidSerialiseConstraint s AppSegments "insertUser") => AcidSerialiseEventOptions s -> (String -> IO ()) -> QC.Property
+unit_insertAndFetchState step = forAll (generateUsers 100) \us ->
