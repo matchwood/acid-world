@@ -35,6 +35,7 @@ instance AcidSerialiseEvent AcidSerialiserJSON where
   serialiserName _ = "JSON"
   acidSerialiseMakeParsers _ _ _ = makeJSONParsers
   acidSerialiseEvent _ se = (Aeson.encode se) <> "\n"
+  acidDeserialiseEvent _ t = left (T.pack) $ (Aeson.eitherDecode' t)
   acidDeserialiseEvents :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
   acidDeserialiseEvents  _ (AcidSerialiseParsersJSON ps) =
         linesUnboundedAsciiC .|
@@ -50,8 +51,8 @@ instance AcidSerialiseEvent AcidSerialiserJSON where
               Just p -> p hm
           _ -> fail $ "Expected to find a text n key in value " <> show hm
 
-instance AcidSerialiseC AcidSerialiserJSON n where
-  type AcidSerialiseConstraint AcidSerialiserJSON n = (All ToJSON (EventArgs n), All FromJSON (EventArgs n))
+instance AcidSerialiseC AcidSerialiserJSON ss nn n where
+  type AcidSerialiseConstraint AcidSerialiserJSON ss nn n = (All ToJSON (EventArgs n), All FromJSON (EventArgs n))
 
 class (All FromJSON (EventArgs n)) => EventFromJSON n
 instance (All FromJSON (EventArgs n)) => EventFromJSON n
@@ -78,8 +79,8 @@ makeJSONParsers =
 
 decodeWrappedEventJSON :: forall n ss nn. (ValidEventName ss n, EventFromJSON n) => Proxy n -> Object -> Either Text (WrappedEvent ss nn)
 decodeWrappedEventJSON _ hm = do
-  ((WrappedEventT wr) :: (WrappedEventT ss nn n))  <- fromJSONEither (Object hm)
-  pure $ wr
+  (se :: (StorableEvent ss nn n))  <- fromJSONEither (Object hm)
+  pure $ WrappedEvent se
 
 fromJSONEither :: FromJSON a => Value -> Either Text a
 fromJSONEither v =
@@ -101,13 +102,13 @@ instance (All ToJSON xs) => ToJSON (EventArgsContainer xs) where
     toJSON $ collapse_NP $ cmap_NP (Proxy :: Proxy ToJSON) (K . toJSON . unI) np
 
 
-instance (ValidEventNameAndFromJSON ss n, EventArgs n ~ xs) => FromJSON (WrappedEventT ss nn n) where
+instance (ValidEventNameAndFromJSON ss n, EventArgs n ~ xs) => FromJSON (StorableEvent ss nn n) where
   parseJSON = Aeson.withObject "WrappedEventT" $ \o -> do
     t <- o Aeson..: "t"
     uid <- o Aeson..: "i"
     args <- o Aeson..: "a"
 
-    return $ WrappedEventT (WrappedEvent t uid ((Event args) :: Event n))
+    return $ StorableEvent t uid ((Event args) :: Event n)
 
 instance (All FromJSON xs) => FromJSON (EventArgsContainer xs) where
   parseJSON = Aeson.withArray "EventArgsContainer" $ \v -> fmap EventArgsContainer $ npIFromJSON (V.toList v)

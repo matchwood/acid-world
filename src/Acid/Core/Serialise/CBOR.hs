@@ -75,6 +75,10 @@ instance (All Serialise (EventArgs n)) => EventFromCBOR n
 class (ValidEventName ss n, EventFromCBOR n) => ValidEventNameAndFromCBOR ss n
 instance (ValidEventName ss n, EventFromCBOR n) => ValidEventNameAndFromCBOR ss n
 
+
+instance AcidSerialiseC AcidSerialiserCBOR ss nn n where
+  type AcidSerialiseConstraint AcidSerialiserCBOR ss nn n = (All Serialise (EventArgs n), ValidEventNameAndFromCBOR ss n)
+
 instance AcidDeserialiseC AcidSerialiserCBOR ss nn where
   type AcidDeserialiseConstraint AcidSerialiserCBOR ss nn = All (ValidEventNameAndFromCBOR ss) nn
 
@@ -130,14 +134,12 @@ decodeWrappedEventCBOR _ t = runST (supplyCurrentInput =<< CBOR.Read.deserialise
       handleEndOfCurrentInput (CBOR.Read.Fail _ _ err) = pure $ Left (T.pack $ show err)
       deserialiseKnownEvent :: Decoder s (WrappedEvent ss nn)
       deserialiseKnownEvent = do
-        ((WrappedEventT wr) :: (WrappedEventT ss nn n))  <- decode
-        pure wr
+        (se :: (StorableEvent ss nn n))  <- decode
+        pure $ WrappedEvent se
 
 
-instance AcidSerialiseC AcidSerialiserCBOR n where
-  type AcidSerialiseConstraint AcidSerialiserCBOR n = (All Serialise (EventArgs n))
 
-instance (All Serialise (EventArgs n)) => Serialise (StorableEvent ss nn n) where
+instance (All Serialise (EventArgs n), ValidEventNameAndFromCBOR ss n) => Serialise (StorableEvent ss nn n) where
   encode (StorableEvent t ui (Event xs :: Event n)) =
     encodeListLen 5 <>
     encodeWord 0 <>
@@ -145,7 +147,11 @@ instance (All Serialise (EventArgs n)) => Serialise (StorableEvent ss nn n) wher
     encode t <>
     encode ui <>
     encode xs
-  decode = fail "Storable events cannot be decoded - they have to be decoded to WrappedEvents"
+  decode = do
+    t <- decode
+    uid <- decode
+    args <- decode
+    return $ StorableEvent t uid ((Event args) :: Event n)
 
 
 
@@ -157,7 +163,7 @@ instance Serialise EventId where
       Nothing -> fail $ "Could not parse UUID from bytestring " <> show bs
       Just uuid -> pure . EventId $ uuid
 
-
+{-
 instance (ValidEventNameAndFromCBOR ss n, EventArgs n ~ xs) => Serialise (WrappedEventT ss nn n) where
   encode = fail "WrappedEventTs cannot be encoded, use a StorableEvent instead"
   decode = do
@@ -167,7 +173,7 @@ instance (ValidEventNameAndFromCBOR ss n, EventArgs n ~ xs) => Serialise (Wrappe
     args <- decode
 
     return $ WrappedEventT (WrappedEvent t uid ((Event args) :: Event n))
-
+-}
 
 instance (All Serialise xs) => Serialise (EventArgsContainer xs) where
   encode (EventArgsContainer np) = encodeListLenIndef <>

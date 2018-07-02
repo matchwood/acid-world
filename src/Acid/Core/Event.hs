@@ -112,16 +112,18 @@ mkStorableEvent e = do
   return $ StorableEvent t (EventId uuid) e
 
 data WrappedEvent ss nn where
-  WrappedEvent :: (HasSegments ss (EventSegments n)) => {
+  WrappedEvent :: (HasSegments ss (EventSegments n)) => StorableEvent ss nn n -> WrappedEvent ss nn
+
+  {-{
     wrappedEventTime :: Time.UTCTime,
     wrappedEventId :: EventId,
     wrappedEventEvent :: Event n} -> WrappedEvent ss nn
-
-newtype WrappedEventT ss nn n = WrappedEventT (WrappedEvent ss nn )
+-}
+--newtype WrappedEventT ss nn n = WrappedEventT (WrappedEvent ss nn )
 
 
 runWrappedEvent :: AcidWorldUpdateInner m ss => WrappedEvent ss e -> m ss ()
-runWrappedEvent (WrappedEvent _ _ (Event xs :: Event n)) = void $ runEvent (Proxy :: Proxy n) xs
+runWrappedEvent (WrappedEvent (StorableEvent _ _ (Event xs :: Event n))) = void $ runEvent (Proxy :: Proxy n) xs
 
 
 

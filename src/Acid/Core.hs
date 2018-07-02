@@ -61,7 +61,7 @@ closeAcidWorld (AcidWorld {..}) = do
   closeUpdate acidWorldUpdateState
 
 
-update :: (IsValidEvent ss nn n, MonadIO m, AcidSerialiseConstraint t n) => AcidWorld ss nn t -> Event n -> m (EventResult n)
+update :: (IsValidEvent ss nn n, MonadIO m, AcidSerialiseConstraint t ss nn n) => AcidWorld ss nn t -> Event n -> m (EventResult n)
 update (AcidWorld {..}) = handleUpdateEvent (acidSerialiseEvent acidWorldSerialiserOptions)  acidWorldBackendState acidWorldUpdateState
 
 

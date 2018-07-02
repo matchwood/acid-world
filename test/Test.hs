@@ -35,7 +35,7 @@ tests = testGroup "Tests" [
   traceM $ "Users inserted after restore :: " <> (utf8BuilderToText $ displayShow n2)
 -}
 
-serialiserTests :: forall s. (AcidSerialiseEvent s, AcidSerialiseConstraint s "insertUser", AcidDeserialiseConstraint s AppSegments AppEvents) => AcidSerialiseEventOptions s -> TestTree
+serialiserTests :: forall s. (AcidSerialiseEvent s, AcidSerialiseConstraint s AppSegments AppEvents "insertUser", AcidDeserialiseConstraint s AppSegments AppEvents) => AcidSerialiseEventOptions s -> TestTree
 serialiserTests o = testGroup "Serialiser" [
     testGroup (T.unpack $ serialiserName (Proxy :: Proxy s)) [
       testProperty "serialiseEqualDeserialise" $ prop_serialiseEqualDeserialise o
@@ -43,7 +43,7 @@ serialiserTests o = testGroup "Serialiser" [
 
   ]
 
-prop_serialiseEqualDeserialise ::forall s. (AcidSerialiseEvent s, AcidSerialiseConstraint s "insertUser", AcidDeserialiseConstraint s AppSegments AppEvents) => AcidSerialiseEventOptions s -> QC.Property
+prop_serialiseEqualDeserialise ::forall s. (AcidSerialiseEvent s, AcidSerialiseConstraint s AppSegments AppEvents "insertUser", AcidDeserialiseConstraint s AppSegments AppEvents) => AcidSerialiseEventOptions s -> QC.Property
 prop_serialiseEqualDeserialise o = forAll genStorableEvent $ \e ->
   let serialised = acidSerialiseEvent o e
       deserialisedCon = acidDeserialiseEvents o sParsers
@@ -72,4 +72,4 @@ genStorableEvent = do
   return $ StorableEvent t (EventId eId) e
 
 storableEventEqualsWrappedEvent :: StorableEvent AppSegments AppEvents n -> WrappedEvent AppSegments AppEvents -> QCP.Result
-storableEventEqualsWrappedEvent = undefined
+storableEventEqualsWrappedEvent (StorableEvent t1 eId1 e1) (WrappedEvent t2) = undefined

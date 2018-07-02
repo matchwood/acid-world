@@ -26,14 +26,14 @@ class AcidSerialiseEvent t where
   serialiserName :: Proxy t -> Text
   acidSerialiseMakeParsers :: (ValidEventNames ss nn, AcidDeserialiseConstraint t ss nn) => AcidSerialiseEventOptions t -> Proxy ss -> Proxy nn -> AcidSerialiseParsers t ss nn
 
-  acidSerialiseEvent :: (AcidSerialiseConstraint t n) => AcidSerialiseEventOptions t -> StorableEvent ss nn n -> AcidSerialiseT t
+  acidSerialiseEvent :: (AcidSerialiseConstraint t ss nn n) => AcidSerialiseEventOptions t -> StorableEvent ss nn n -> AcidSerialiseT t
   acidDeserialiseEvents :: (Monad m) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> (ConduitT (AcidSerialiseT t) (Either Text (WrappedEvent ss nn)) (m) ())
+  acidDeserialiseEvent :: AcidSerialiseEventOptions t -> AcidSerialiseT t -> (Either Text (StorableEvent ss nn n))
 
-class AcidSerialiseC t n where
-  type AcidSerialiseConstraint t n :: Constraint
+class AcidSerialiseC t (ss :: [Symbol]) (nn :: [Symbol]) (n :: Symbol) where
+  type AcidSerialiseConstraint t ss nn n :: Constraint
 
 
 class AcidDeserialiseC t (ss :: [Symbol]) (nn :: [Symbol]) where
   type AcidDeserialiseConstraint t ss nn :: Constraint
-
 

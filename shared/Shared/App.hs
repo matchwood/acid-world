@@ -141,7 +141,7 @@ openAppAcidWorldWithDefaultState = do
 -}
 
 
-openAppAcidWorldRestoreState :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidDeserialiseConstraint s AppSegments AppEvents, AcidSerialiseConstraint s "fetchUsersStats" ) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
+openAppAcidWorldRestoreState :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidDeserialiseConstraint s AppSegments AppEvents, AcidSerialiseConstraint s AppSegments AppEvents "fetchUsersStats" ) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
 openAppAcidWorldRestoreState opts s = do
   t <- mkTempDir
   let e = topLevelStoredStateDir <> "/" <> "testState" <> "/" <> s
@@ -173,7 +173,7 @@ reopenAcidWorld iAw = do
   throwEither $ openAcidWorld Nothing (acidWorldBackendConfig) (acidWorldUpdateMonadConfig) acidWorldSerialiserOptions
 
 
-insertUsers :: AcidSerialiseConstraint s "insertUser" => Int -> Middleware s
+insertUsers :: AcidSerialiseConstraint s AppSegments AppEvents "insertUser" => Int -> Middleware s
 insertUsers i iAw = do
   aw <- iAw
   us <- generateUsers i
@@ -181,11 +181,11 @@ insertUsers i iAw = do
   pure aw
 
 
-runInsertUser :: AcidSerialiseConstraint s "insertUser" => AppAW s -> User -> IO User
+runInsertUser :: AcidSerialiseConstraint s AppSegments AppEvents "insertUser" => AppAW s -> User -> IO User
 runInsertUser aw u = update aw (mkEvent (Proxy :: Proxy ("insertUser")) u)
 
 
-runFetchUsersStats :: AcidSerialiseConstraint s "fetchUsersStats" => AppAW s -> IO Int
+runFetchUsersStats :: AcidSerialiseConstraint s  AppSegments AppEvents "fetchUsersStats" => AppAW s -> IO Int
 runFetchUsersStats aw = update aw (mkEvent (Proxy :: Proxy ("fetchUsersStats")) )
 
 
