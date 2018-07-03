@@ -25,30 +25,30 @@ main = do
 
        env (openAppAcidWorldFresh AcidSerialiserJSONOptions) $ \aw ->
             bgroup "Empty state" [
-               bench "insertUser" $ whnfIO (generateUser >>= runInsertUser aw)
+               bench "insertUser" $ whnfIO (generateUserIO >>= runInsertUser aw)
              ],
        env (openAppAcidWorldRestoreState AcidSerialiserJSONOptions "JSON/100kUsers") $ \aw ->
             bgroup "100K restored state" [
-               bench "insertUser" $ whnfIO (generateUser >>= runInsertUser aw)
+               bench "insertUser" $ whnfIO (generateUserIO >>= runInsertUser aw)
              ],
        env (openAppAcidWorldRestoreState AcidSerialiserJSONOptions "JSON/1mUsers") $ \aw ->
             bgroup "1m restored state" [
-               bench "insertUser" $ whnfIO (generateUser >>= runInsertUser aw)
+               bench "insertUser" $ whnfIO (generateUserIO >>= runInsertUser aw)
              ]
            ],
     bgroup "CBOR" [
 
        env (openAppAcidWorldFresh AcidSerialiserCBOROptions) $ \aw ->
             bgroup "Empty state" [
-               bench "insertUser" $ whnfIO (generateUser >>= runInsertUser aw)
+               bench "insertUser" $ whnfIO (generateUserIO >>= runInsertUser aw)
              ],
        env (openAppAcidWorldRestoreState AcidSerialiserCBOROptions "CBOR/100kUsers") $ \aw ->
             bgroup "100K restored state" [
-               bench "insertUser" $ whnfIO (generateUser >>= runInsertUser aw)
+               bench "insertUser" $ whnfIO (generateUserIO >>= runInsertUser aw)
              ],
        env (openAppAcidWorldRestoreState AcidSerialiserCBOROptions "CBOR/1mUsers") $ \aw ->
             bgroup "1m restored state" [
-               bench "insertUser" $ whnfIO (generateUser >>= runInsertUser aw)
+               bench "insertUser" $ whnfIO (generateUserIO >>= runInsertUser aw)
              ]
            ]
       ]

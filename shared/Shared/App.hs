@@ -101,13 +101,14 @@ instance Eventable "fetchUsersStats" where
   type EventSegments "fetchUsersStats" = '["Users"]
   runEvent _ _ = fmap IxSet.size $ getSegment (Proxy :: Proxy "Users")
 
-generateUser :: IO User
-generateUser = liftIO $ QC.generate arbitrary
 
 
-generateUsers :: Int -> IO [User]
+generateUserIO :: IO User
+generateUserIO = QC.generate arbitrary
+
+generateUsers :: Int -> Gen [User]
 generateUsers i = do
-  us <- liftIO $ sequence $ replicate i (QC.generate arbitrary)
+  us <- sequence $ replicate i (arbitrary)
   pure $ map (\(u, uid) -> u{userId = uid}) $ zip us [1..]
 
 
@@ -176,7 +177,7 @@ reopenAcidWorld iAw = do
 insertUsers :: AcidSerialiseConstraint s AppSegments "insertUser" => Int -> Middleware s
 insertUsers i iAw = do
   aw <- iAw
-  us <- generateUsers i
+  us <- QC.generate $ generateUsers i
   mapM_ (runInsertUser aw) us
   pure aw
 

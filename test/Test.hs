@@ -4,6 +4,8 @@ import Shared.App
 
 import RIO
 import qualified RIO.Text as T
+import qualified  RIO.ByteString.Lazy as BL
+
 import Data.Proxy(Proxy(..))
 import Acid.World
 import Test.Tasty
@@ -12,6 +14,17 @@ import Test.Tasty.HUnit
 
 import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Property as QCP
+
+
+
+type AppValidSerialiserConstraint s = (
+  AcidSerialiseEvent s,
+  AcidSerialiseConstraintAll s AppSegments AppEvents,
+  AcidSerialiseT s ~ BL.ByteString,
+  AcidSerialiseConstraint s AppSegments "insertUser",
+  AcidSerialiseConstraint s AppSegments "fetchUsers"
+  )
+
 
 main :: IO ()
 main = do
@@ -23,7 +36,7 @@ tests = testGroup "Tests" [
       serialiserTests AcidSerialiserCBOROptions
    ]
 
-serialiserTests :: forall s. (AcidSerialiseEvent s, AcidSerialiseConstraint s AppSegments "insertUser", AcidSerialiseConstraintAll s AppSegments AppEvents) => AcidSerialiseEventOptions s -> TestTree
+serialiserTests :: forall s. AppValidSerialiserConstraint s => AcidSerialiseEventOptions s -> TestTree
 serialiserTests o = testGroup "Serialiser" [
     testGroup (T.unpack $ serialiserName (Proxy :: Proxy s)) [
       testProperty "serialiseEventEqualDeserialise" $ prop_serialiseEventEqualDeserialise o,
@@ -41,7 +54,7 @@ genStorableEvent = do
   let e = mkEvent (Proxy :: Proxy ("insertUser")) u
   return $ StorableEvent t (EventId eId) e
 
-prop_serialiseEventEqualDeserialise :: forall s. (AcidSerialiseEvent s, AcidSerialiseConstraint s AppSegments "insertUser") => AcidSerialiseEventOptions s -> QC.Property
+prop_serialiseEventEqualDeserialise :: forall s. AppValidSerialiserConstraint s => AcidSerialiseEventOptions s -> QC.Property
 prop_serialiseEventEqualDeserialise o = forAll genStorableEvent $ \e ->
   let serialised = serialiseEvent o e
       deserialisedE = deserialiseEvent o serialised
@@ -50,7 +63,7 @@ prop_serialiseEventEqualDeserialise o = forAll genStorableEvent $ \e ->
       Right e' -> e === e'
 
 
-prop_serialiseWrappedEventEqualDeserialise :: forall s. (AcidSerialiseEvent s, AcidSerialiseConstraint s AppSegments "insertUser", AcidSerialiseConstraintAll s AppSegments AppEvents) => AcidSerialiseEventOptions s -> QC.Property
+prop_serialiseWrappedEventEqualDeserialise :: forall s. AppValidSerialiserConstraint s  => AcidSerialiseEventOptions s -> QC.Property
 prop_serialiseWrappedEventEqualDeserialise o = forAll genStorableEvent $ \e ->
   let serialised = serialiseEvent o e
       deserialisedE = deserialiseWrappedEvent o serialised
@@ -58,9 +71,13 @@ prop_serialiseWrappedEventEqualDeserialise o = forAll genStorableEvent $ \e ->
       Left r -> property $ QCP.failed {QCP.reason = T.unpack $ "Error encountered when deserialising: " <> r}
       (Right (e'  :: WrappedEvent AppSegments AppEvents)) -> show (WrappedEvent e) === show e'
 
-genUsers :: QC.Gen [User]
-genUsers = do
-  replicate i (QC.generate arbitrary)
 
-unit_insertAndFetchState :: forall s. (AcidSerialiseEvent s, AcidSerialiseConstraint s AppSegments "insertUser") => AcidSerialiseEventOptions s -> (String -> IO ()) -> QC.Property
-unit_insertAndFetchState step = forAll (generateUsers 100) \us ->
+
+unit_insertAndFetchState :: forall s. AppValidSerialiserConstraint s  => AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
+unit_insertAndFetchState o step = do
+  us <- QC.generate $ generateUsers 100
+  aw <- openAppAcidWorldFresh o
+  step "Inserting users"
+  mapM_ (runInsertUser aw) us
+  us2 <- update aw (mkEvent (Proxy :: Proxy ("fetchUsers")) )
+  assertBool "Fetched user list did not match inserted users" (us == us2)
