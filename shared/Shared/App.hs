@@ -160,7 +160,7 @@ openAppAcidWorldFresh opts = do
   throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure opts
 
 closeAndReopen :: Middleware s
-closeAndReopen = reopenAcidWorld . closeAcidWorldMiddleware
+closeAndReopen = reopenAcidWorldMiddleware . closeAcidWorldMiddleware
 
 closeAcidWorldMiddleware :: Middleware s
 closeAcidWorldMiddleware iAw = do
@@ -168,10 +168,8 @@ closeAcidWorldMiddleware iAw = do
   closeAcidWorld aw
   pure aw
 
-reopenAcidWorld :: Middleware s
-reopenAcidWorld iAw = do
-  (AcidWorld{..}) <- iAw
-  throwEither $ openAcidWorld Nothing (acidWorldBackendConfig) (acidWorldUpdateMonadConfig) acidWorldSerialiserOptions
+reopenAcidWorldMiddleware :: Middleware s
+reopenAcidWorldMiddleware iAw = iAw >>= throwEither . reopenAcidWorld
 
 
 insertUsers :: AcidSerialiseConstraint s AppSegments "insertUser" => Int -> Middleware s

@@ -41,7 +41,8 @@ serialiserTests o = testGroup "Serialiser" [
     testGroup (T.unpack $ serialiserName (Proxy :: Proxy s)) [
       testProperty "serialiseEventEqualDeserialise" $ prop_serialiseEventEqualDeserialise o,
       testProperty "serialiseWrappedEventEqualDeserialise" $ prop_serialiseWrappedEventEqualDeserialise o,
-      testCaseSteps "insertAndFetchState" $ unit_insertAndFetchState o
+      testCaseSteps "insertAndFetchState" $ unit_insertAndFetchState o,
+      testCaseSteps "insertAndRestoreState" $ unit_insertAndRestoreState o
     ]
 
   ]
@@ -76,8 +77,25 @@ prop_serialiseWrappedEventEqualDeserialise o = forAll genStorableEvent $ \e ->
 unit_insertAndFetchState :: forall s. AppValidSerialiserConstraint s  => AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
 unit_insertAndFetchState o step = do
   us <- QC.generate $ generateUsers 100
+  step "Opening acid world"
   aw <- openAppAcidWorldFresh o
   step "Inserting users"
   mapM_ (runInsertUser aw) us
+  step "Fetching users"
   us2 <- update aw (mkEvent (Proxy :: Proxy ("fetchUsers")) )
+  assertBool "Fetched user list did not match inserted users" (us == us2)
+
+unit_insertAndRestoreState :: forall s. AppValidSerialiserConstraint s  => AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
+unit_insertAndRestoreState o step = do
+  us <- QC.generate $ generateUsers 100
+  step "Opening acid world"
+  aw <- openAppAcidWorldFresh o
+  step "Inserting users"
+  mapM_ (runInsertUser aw) us
+  step "Closing acid world"
+  closeAcidWorld aw
+  step "Reopening acid world"
+  aw2 <- reopenAcidWorldMiddleware (pure aw)
+  step "Fetching users"
+  us2 <- update aw2 (mkEvent (Proxy :: Proxy ("fetchUsers")) )
   assertBool "Fetched user list did not match inserted users" (us == us2)
