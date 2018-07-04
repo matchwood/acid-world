@@ -131,17 +131,21 @@ openAppAcidWorldRestoreState opts s = do
   t <- mkTempDir
   let e = topLevelStoredStateDir <> "/" <> "testState" <> "/" <> s
   copyDirectory e t
-  aw <- throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWConfigStatePure opts
+  aw <- throwEither $ openAcidWorld Nothing (AWBConfigFS t) AWConfigStatePure opts
   -- this is to force the internal state
   i <- query aw fetchUsersStats
   putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
   pure aw
 
+openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AcidWorldBackend b AppSegments AppEvents, AWBSerialiseT b AppSegments AppEvents ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => (IO (AWBConfig b AppSegments AppEvents)) -> (AcidSerialiseEventOptions s) -> IO (AppAW s)
+openAppAcidWorldFresh bConfIO opts = do
+  bConf <- bConfIO
 
-openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => (AcidSerialiseEventOptions s) -> IO (AppAW s)
-openAppAcidWorldFresh opts = do
-  t <- mkTempDir
-  throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWConfigStatePure opts
+  throwEither $ openAcidWorld Nothing bConf AWConfigStatePure opts
+
+
+openAppAcidWorldFreshFS :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => (AcidSerialiseEventOptions s) -> IO (AppAW s)
+openAppAcidWorldFreshFS opts = openAppAcidWorldFresh (fmap AWBConfigFS mkTempDir) opts
 
 closeAndReopen :: Middleware s
 closeAndReopen = reopenAcidWorldMiddleware . closeAcidWorldMiddleware

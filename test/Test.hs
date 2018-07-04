@@ -25,19 +25,28 @@ type AppValidSerialiserConstraint s = (
   )
 
 
+data AppValidSerialiser where
+  AppValidSerialiser :: (AppValidSerialiserConstraint s) => AcidSerialiseEventOptions s -> AppValidSerialiser
+
+serialisersToTest :: [AppValidSerialiser]
+serialisersToTest = [
+    AppValidSerialiser AcidSerialiserJSONOptions
+  , AppValidSerialiser AcidSerialiserCBOROptions
+  , AppValidSerialiser AcidSerialiserSafeCopyOptions
+  ]
+
+
+
 main :: IO ()
 main = do
   defaultMain tests
 
 tests :: TestTree
-tests = testGroup "Tests" [
-      serialiserTests AcidSerialiserJSONOptions,
-      serialiserTests AcidSerialiserCBOROptions,
-      serialiserTests AcidSerialiserSafeCopyOptions
-   ]
+tests = testGroup "Tests" $
+  map serialiserTests serialisersToTest
 
-serialiserTests :: forall s. AppValidSerialiserConstraint s => AcidSerialiseEventOptions s -> TestTree
-serialiserTests o = testGroup "Serialiser" [
+serialiserTests ::  AppValidSerialiser-> TestTree
+serialiserTests (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = testGroup "Serialiser" [
     testGroup (T.unpack $ serialiserName (Proxy :: Proxy s)) [
       testProperty "serialiseEventEqualDeserialise" $ prop_serialiseEventEqualDeserialise o,
       testProperty "serialiseWrappedEventEqualDeserialise" $ prop_serialiseWrappedEventEqualDeserialise o,
@@ -78,7 +87,7 @@ unit_insertAndFetchState :: forall s. AppValidSerialiserConstraint s  => AcidSer
 unit_insertAndFetchState o step = do
   us <- QC.generate $ generateUsers 100
   step "Opening acid world"
-  aw <- openAppAcidWorldFresh o
+  aw <- openAppAcidWorldFreshFS o
   step "Inserting users"
   mapM_ (runInsertUser aw) us
   step "Fetching users"
@@ -89,7 +98,7 @@ unit_insertAndRestoreState :: forall s. AppValidSerialiserConstraint s  => AcidS
 unit_insertAndRestoreState o step = do
   us <- QC.generate $ generateUsers 100
   step "Opening acid world"
-  aw <- openAppAcidWorldFresh o
+  aw <- openAppAcidWorldFreshFS o
   step "Inserting users"
   mapM_ (runInsertUser aw) us
   step "Closing acid world"

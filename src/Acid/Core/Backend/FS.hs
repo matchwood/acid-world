@@ -25,22 +25,22 @@ newtype AcidWorldBackendFS ss nn a = AcidWorldBackendFS (IO a)
 instance ( ValidSegmentNames ss
          , ValidEventNames ss nn ) =>
   AcidWorldBackend AcidWorldBackendFS ss nn where
-  data AWBState AcidWorldBackendFS ss nn = AWBStateBackendFS {
-    sWBStateBackendConfig :: AWBConfig AcidWorldBackendFS ss nn
+  data AWBState AcidWorldBackendFS ss nn = AWBStateFS {
+    aWBStateFSConfig :: AWBConfig AcidWorldBackendFS ss nn
   }
-  data AWBConfig AcidWorldBackendFS ss nn = AWBConfigBackendFS {
-    aWBConfigBackendFSStateDir :: FilePath
+  data AWBConfig AcidWorldBackendFS ss nn = AWBConfigFS {
+    aWBConfigFSStateDir :: FilePath
   }
   type AWBSerialiseT AcidWorldBackendFS ss nn = BL.ByteString
   initialiseBackend c _  = do
-    stateP <- Dir.makeAbsolute (aWBConfigBackendFSStateDir c)
+    stateP <- Dir.makeAbsolute (aWBConfigFSStateDir c)
     Dir.createDirectoryIfMissing True stateP
     let eventPath = makeEventPath stateP
     b <- Dir.doesFileExist eventPath
     when (not b) (BL.writeFile eventPath "")
-    pure . pure $ AWBStateBackendFS c{aWBConfigBackendFSStateDir = stateP}
+    pure . pure $ AWBStateFS c{aWBConfigFSStateDir = stateP}
   loadEvents deserialiseConduit s = do
-    let eventPath = makeEventPath (aWBConfigBackendFSStateDir . sWBStateBackendConfig $ s)
+    let eventPath = makeEventPath (aWBConfigFSStateDir . aWBStateFSConfig $ s)
 
 
     pure $
@@ -55,12 +55,11 @@ instance ( ValidSegmentNames ss
 
   -- this should be bracketed and so forth @todo
   handleUpdateEvent serializer awb awu (e :: Event n) = do
-    let eventPath = makeEventPath (aWBConfigBackendFSStateDir . sWBStateBackendConfig $ awb)
+    let eventPath = makeEventPath (aWBConfigFSStateDir . aWBStateFSConfig $ awb)
     stE <- mkStorableEvent e
     BL.appendFile eventPath (serializer stE)
+    runUpdate awu e
 
-    let (AcidWorldBackendFS m :: AcidWorldBackendFS ss nn (EventResult n)) = runUpdate awu e
-    liftIO $ m
 
 makeEventPath :: FilePath -> FilePath
 makeEventPath fp = fp <> "/" <> "events"

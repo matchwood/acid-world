@@ -23,7 +23,7 @@ main = do
   defaultMainWith conf [
     bgroup "JSON" [
 
-       env (openAppAcidWorldFresh AcidSerialiserJSONOptions) $ \aw ->
+       env (openAppAcidWorldFreshFS AcidSerialiserJSONOptions) $ \aw ->
             bgroup "Empty state" [
                bench "insertUser" $ whnfIO (generateUserIO >>= runInsertUser aw)
              ],
@@ -38,7 +38,7 @@ main = do
            ],
     bgroup "CBOR" [
 
-       env (openAppAcidWorldFresh AcidSerialiserCBOROptions) $ \aw ->
+       env (openAppAcidWorldFreshFS AcidSerialiserCBOROptions) $ \aw ->
             bgroup "Empty state" [
                bench "insertUser" $ whnfIO (generateUserIO >>= runInsertUser aw)
              ],
