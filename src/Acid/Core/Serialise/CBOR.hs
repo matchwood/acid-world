@@ -49,7 +49,7 @@ instance AcidSerialiseEvent AcidSerialiserCBOR where
       start = await >>= maybe (return ()) (loop Nothing)
       loop :: (Maybe (CBOREventParser ss nn)) -> BS.ByteString ->  ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ()
       loop Nothing t = do
-        case findParserForWrappedEvent ps t of
+        case findCBORParserForWrappedEvent ps t of
           Left err -> yield (Left err) >> await >>= maybe (return ()) (loop Nothing)
           Right Nothing -> do
             mt <- await
@@ -82,8 +82,8 @@ instance AcidSerialiseC AcidSerialiserCBOR where
 
 
 
-findParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserCBOR ss nn -> BS.ByteString -> Either Text (Maybe (BS.ByteString, CBOREventParser ss nn))
-findParserForWrappedEvent ps t = runST (supplyCurrentInput =<< CBOR.Read.deserialiseIncremental deserialiseNameAndFindParser)
+findCBORParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserCBOR ss nn -> BS.ByteString -> Either Text (Maybe (BS.ByteString, CBOREventParser ss nn))
+findCBORParserForWrappedEvent ps t = runST (supplyCurrentInput =<< CBOR.Read.deserialiseIncremental deserialiseNameAndFindParser)
     where
       supplyCurrentInput :: IDecode s (CBOREventParser ss nn) -> ST s (Either Text (Maybe (BS.ByteString, CBOREventParser ss nn)))
       supplyCurrentInput (CBOR.Read.Partial k) = handleEndOfCurrentInput =<< k (Just t)
@@ -120,7 +120,7 @@ makeCBORParsers =
 
 
 decodeWrappedEventCBOR :: forall n ss nn. (CanSerialiseCBOR ss n) => Proxy n -> CBOREventParser ss nn
-decodeWrappedEventCBOR _ t = runST (supplyCurrentInput =<< CBOR.Read.deserialiseIncremental doSerialiseWrappedEvent)
+decodeWrappedEventCBOR _ t = runST (supplyCurrentInput =<< CBOR.Read.deserialiseIncremental doDeserialiseWrappedEvent)
     where
       supplyCurrentInput :: IDecode s (WrappedEvent ss nn) -> ST s (Either Text (Maybe (BS.ByteString, WrappedEvent ss nn)))
       supplyCurrentInput (CBOR.Read.Partial k) = handleEndOfCurrentInput =<< k (Just t)
@@ -130,8 +130,8 @@ decodeWrappedEventCBOR _ t = runST (supplyCurrentInput =<< CBOR.Read.deserialise
       handleEndOfCurrentInput (CBOR.Read.Done bs _ x) = pure $ Right (Just (bs, x))
       handleEndOfCurrentInput (CBOR.Read.Partial _) = pure $ Right Nothing
       handleEndOfCurrentInput (CBOR.Read.Fail _ _ err) = pure $ Left (T.pack $ show err)
-      doSerialiseWrappedEvent :: Decoder s (WrappedEvent ss nn)
-      doSerialiseWrappedEvent = do
+      doDeserialiseWrappedEvent :: Decoder s (WrappedEvent ss nn)
+      doDeserialiseWrappedEvent = do
         (se :: StorableEvent ss nn n) <- deserialiseStorableEventBody
         pure $ WrappedEvent se
 

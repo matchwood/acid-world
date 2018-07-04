@@ -33,7 +33,8 @@ main = do
 tests :: TestTree
 tests = testGroup "Tests" [
       serialiserTests AcidSerialiserJSONOptions,
-      serialiserTests AcidSerialiserCBOROptions
+      serialiserTests AcidSerialiserCBOROptions,
+      serialiserTests AcidSerialiserSafeCopyOptions
    ]
 
 serialiserTests :: forall s. AppValidSerialiserConstraint s => AcidSerialiseEventOptions s -> TestTree

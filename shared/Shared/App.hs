@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
 module Shared.App where
@@ -22,6 +23,7 @@ import qualified Data.IxSet.Typed as IxSet
 import qualified  System.FilePath as FilePath
 import Acid.World
 import Codec.Serialise
+import Data.SafeCopy
 
 (^*) :: Int -> Int -> Int
 (^*) = (^)
@@ -240,3 +242,4 @@ getAbsDirectoryContentsRecursive dirPath = do
   return $ concat paths
 
 
+deriveSafeCopy 0 'base ''User
