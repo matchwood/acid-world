@@ -10,29 +10,25 @@ import qualified  RIO.ByteString.Lazy as BL
 
 import Prelude(userError)
 
-import Acid.Core.Segment
 import Acid.Core.State
 import Acid.Core.Backend.Abstract
 import Conduit
 
-newtype AcidWorldBackendFS ss nn a = AcidWorldBackendFS (IO a)
-  deriving (Functor, Applicative, Monad, MonadIO, MonadThrow)
+data AcidWorldBackendFS
 
 
 
 
 
-instance ( ValidSegmentNames ss
-         , ValidEventNames ss nn ) =>
-  AcidWorldBackend AcidWorldBackendFS ss nn where
-  data AWBState AcidWorldBackendFS ss nn = AWBStateFS {
-    aWBStateFSConfig :: AWBConfig AcidWorldBackendFS ss nn
+instance AcidWorldBackend AcidWorldBackendFS where
+  data AWBState AcidWorldBackendFS = AWBStateFS {
+    aWBStateFSConfig :: AWBConfig AcidWorldBackendFS
   }
-  data AWBConfig AcidWorldBackendFS ss nn = AWBConfigFS {
+  data AWBConfig AcidWorldBackendFS = AWBConfigFS {
     aWBConfigFSStateDir :: FilePath
   }
-  type AWBSerialiseT AcidWorldBackendFS ss nn = BL.ByteString
-  initialiseBackend c _  = do
+  type AWBSerialiseT AcidWorldBackendFS  = BL.ByteString
+  initialiseBackend _ c _  = do
     stateP <- Dir.makeAbsolute (aWBConfigFSStateDir c)
     Dir.createDirectoryIfMissing True stateP
     let eventPath = makeEventPath stateP

@@ -137,7 +137,7 @@ openAppAcidWorldRestoreState opts s = do
   putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
   pure aw
 
-openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AcidWorldBackend b AppSegments AppEvents, AWBSerialiseT b AppSegments AppEvents ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => (IO (AWBConfig b AppSegments AppEvents)) -> (AcidSerialiseEventOptions s) -> IO (AppAW s)
+openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AcidWorldBackend b, AWBSerialiseT b ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => (IO (AWBConfig b)) -> (AcidSerialiseEventOptions s) -> IO (AppAW s)
 openAppAcidWorldFresh bConfIO opts = do
   bConf <- bConfIO
 

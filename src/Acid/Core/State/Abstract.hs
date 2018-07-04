@@ -62,7 +62,7 @@ instance (KnownSymbol a) => ToUniqueText (a :: Symbol) where
   toUniqueText = T.pack . symbolVal
 
 
-class (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsValidEvent ss nn n
+class (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsValidEvent ss nn (n :: Symbol)
 instance (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsValidEvent ss nn n
 
 
