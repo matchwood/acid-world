@@ -29,7 +29,7 @@ import Control.Arrow (left)
 import Control.Monad.ST
 import Conduit
 
-import Acid.Core.Event
+import Acid.Core.State
 
 data AcidSerialiserCBOR
 

@@ -11,9 +11,8 @@ import qualified  RIO.ByteString.Lazy as BL
 import Prelude(userError)
 
 import Acid.Core.Segment
-import Acid.Core.Event
+import Acid.Core.State
 import Acid.Core.Backend.Abstract
-import Acid.Core.Inner.Abstract
 import Conduit
 
 newtype AcidWorldBackendFS ss nn a = AcidWorldBackendFS (IO a)
@@ -60,7 +59,7 @@ instance ( ValidSegmentNames ss
     stE <- mkStorableEvent e
     BL.appendFile eventPath (serializer stE)
 
-    let (AcidWorldBackendFS m :: AcidWorldBackendFS ss nn (EventResult n)) = runUpdateEvent awu e
+    let (AcidWorldBackendFS m :: AcidWorldBackendFS ss nn (EventResult n)) = runUpdate awu e
     liftIO $ m
 
 makeEventPath :: FilePath -> FilePath

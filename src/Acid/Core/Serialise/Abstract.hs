@@ -11,7 +11,7 @@ import GHC.Exts (Constraint)
 
 import Data.Proxy(Proxy(..))
 
-import Acid.Core.Event
+import Acid.Core.State
 
 import Conduit
 

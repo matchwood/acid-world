@@ -2,7 +2,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE UndecidableSuperClasses #-}
 
-module Acid.Core.Event where
+module Acid.Core.State.Abstract where
 import RIO
 import qualified  RIO.Text as T
 import qualified  RIO.List as L
@@ -19,12 +19,41 @@ import qualified Data.UUID.V4  as UUID
 import Acid.Core.Segment
 import Acid.Core.Utils
 import Data.Aeson(FromJSON(..), ToJSON(..))
+import Conduit
 
--- this is the class that events run in
 
-class (Monad (m ss)) => AcidWorldUpdateInner m ss where
-  getSegment :: (HasSegment ss s) =>  Proxy s -> m ss (SegmentS s)
-  putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> m ss ()
+{-
+the main definition of an state managing strategy
+-}
+
+
+class (Monad (AWUpdate i ss), Monad (AWQuery i ss)) => AcidWorldState (i :: *) ss where
+  data AWState i ss
+  data AWConfig i ss
+  data AWUpdate i ss a
+  data AWQuery i ss a
+  initialiseState :: (MonadIO z, MonadThrow z) => AWConfig i ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState i ss))
+  closeState :: (MonadIO z) => AWState i ss -> z ()
+  closeState _ = pure ()
+  getSegment :: (HasSegment ss s) =>  Proxy s -> AWUpdate i ss (SegmentS s)
+  putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> AWUpdate i ss ()
+  askSegment :: (HasSegment ss s) =>  Proxy s -> AWQuery i ss (SegmentS s)
+  runUpdate :: ( ValidEventName ss n
+                    , MonadIO z) =>
+    AWState i ss -> Event n -> z (EventResult n)
+  runQuery :: (MonadIO z) => AWState i ss -> AWQuery i ss a -> z a
+  liftQuery :: AWQuery i ss a -> AWUpdate i ss a
+
+data BackendHandles m ss nn = BackendHandles {
+    bhLoadEvents :: forall i. MonadIO m => m (ConduitT i (WrappedEvent ss nn) (ResourceT IO) ()),
+    bhGetLastCheckpointState :: MonadIO m => m (Maybe (SegmentsState ss))
+  }
+
+
+
+{-
+  Events and basic event utilities
+-}
 
 class ToUniqueText (a :: k) where
   toUniqueText :: Proxy a -> Text
@@ -33,14 +62,8 @@ instance (KnownSymbol a) => ToUniqueText (a :: Symbol) where
   toUniqueText = T.pack . symbolVal
 
 
-
-
-
-
-
 class (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsValidEvent ss nn n
 instance (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsValidEvent ss nn n
-
 
 
 class (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss (n :: Symbol)
@@ -62,7 +85,7 @@ class (ToUniqueText n, SListI (EventArgs n), All Eq (EventArgs n), All Show (Eve
   type EventArgs n :: [*]
   type EventResult n :: *
   type EventSegments n :: [Symbol]
-  runEvent :: (AcidWorldUpdateInner m ss, HasSegments ss (EventSegments n)) => Proxy n -> EventArgsContainer (EventArgs n) -> m ss (EventResult n)
+  runEvent :: (AcidWorldState i ss, HasSegments ss (EventSegments n)) => Proxy n -> EventArgsContainer (EventArgs n) -> AWUpdate i ss (EventResult n)
 
 
 
@@ -117,7 +140,7 @@ data WrappedEvent ss nn where
 instance Show (WrappedEvent ss nn) where
   show (WrappedEvent se) = "WrappedEvent: " <> show se
 
-runWrappedEvent :: AcidWorldUpdateInner m ss => WrappedEvent ss e -> m ss ()
+runWrappedEvent :: AcidWorldState i ss => WrappedEvent ss e -> AWUpdate i ss ()
 runWrappedEvent (WrappedEvent (StorableEvent _ _ (Event xs :: Event n))) = void $ runEvent (Proxy :: Proxy n) xs
 
 

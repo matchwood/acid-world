@@ -21,8 +21,7 @@ type AppValidSerialiserConstraint s = (
   AcidSerialiseEvent s,
   AcidSerialiseConstraintAll s AppSegments AppEvents,
   AcidSerialiseT s ~ BL.ByteString,
-  AcidSerialiseConstraint s AppSegments "insertUser",
-  AcidSerialiseConstraint s AppSegments "fetchUsers"
+  AcidSerialiseConstraint s AppSegments "insertUser"
   )
 
 
@@ -83,7 +82,7 @@ unit_insertAndFetchState o step = do
   step "Inserting users"
   mapM_ (runInsertUser aw) us
   step "Fetching users"
-  us2 <- update aw (mkEvent (Proxy :: Proxy ("fetchUsers")) )
+  us2 <- query aw fetchUsers
   assertBool "Fetched user list did not match inserted users" (us == us2)
 
 unit_insertAndRestoreState :: forall s. AppValidSerialiserConstraint s  => AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
@@ -98,5 +97,5 @@ unit_insertAndRestoreState o step = do
   step "Reopening acid world"
   aw2 <- reopenAcidWorldMiddleware (pure aw)
   step "Fetching users"
-  us2 <- update aw2 (mkEvent (Proxy :: Proxy ("fetchUsers")) )
+  us2 <- query aw2 fetchUsers
   assertBool "Fetched user list did not match inserted users" (us == us2)

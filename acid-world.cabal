@@ -16,7 +16,6 @@ library
     Acid.World
     Acid.Core
     Acid.Core.Segment
-    Acid.Core.Event
     Acid.Core.Utils
     Acid.Core.Serialise
     Acid.Core.Serialise.Abstract
@@ -26,9 +25,9 @@ library
     Acid.Core.Backend
     Acid.Core.Backend.Abstract
     Acid.Core.Backend.FS
-    Acid.Core.Inner
-    Acid.Core.Inner.Abstract
-    Acid.Core.Inner.PureState
+    Acid.Core.State
+    Acid.Core.State.Abstract
+    Acid.Core.State.PureState
   other-modules:
   build-depends:
     base,

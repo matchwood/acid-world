@@ -18,7 +18,7 @@ import Data.Serialize
 import qualified Data.UUID  as UUID
 
 
-import Acid.Core.Event
+import Acid.Core.State
 import Acid.Core.Serialise.Abstract
 import Conduit
 

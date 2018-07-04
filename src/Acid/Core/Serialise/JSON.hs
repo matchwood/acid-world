@@ -19,7 +19,7 @@ import qualified Data.Aeson.Types as Aeson
 import Data.Aeson(FromJSON(..), ToJSON(..), Value(..), Object)
 
 
-import Acid.Core.Event
+import Acid.Core.State
 import Acid.Core.Serialise.Abstract
 import Conduit
 

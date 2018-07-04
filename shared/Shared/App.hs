@@ -76,7 +76,7 @@ instance Segment "Users" where
   defaultState _ = IxSet.empty
 
 
-insertUser :: (AcidWorldUpdateInner m ss, HasSegment ss  "Users") => User -> m ss User
+insertUser :: (AcidWorldState i ss, HasSegment ss  "Users") => User -> AWUpdate i ss User
 insertUser a = do
   ls <- getSegment (Proxy :: Proxy "Users")
   let newLs = IxSet.insert a ls
@@ -91,18 +91,13 @@ instance Eventable "insertUser" where
   type EventSegments "insertUser" = '["Users"]
   runEvent _ = toRunEvent insertUser
 
-instance Eventable "fetchUsers" where
-  type EventArgs "fetchUsers" = '[]
-  type EventResult "fetchUsers" = [User]
-  type EventSegments "fetchUsers" = '["Users"]
-  runEvent _ _ = fmap IxSet.toList $ getSegment (Proxy :: Proxy "Users")
 
-instance Eventable "fetchUsersStats" where
-  type EventArgs "fetchUsersStats" = '[]
-  type EventResult "fetchUsersStats" = Int
-  type EventSegments "fetchUsersStats" = '["Users"]
-  runEvent _ _ = fmap IxSet.size $ getSegment (Proxy :: Proxy "Users")
 
+fetchUsers :: (AcidWorldState i ss, HasSegment ss  "Users") => AWQuery i ss [User]
+fetchUsers = fmap IxSet.toList $ askSegment (Proxy :: Proxy "Users")
+
+fetchUsersStats :: (AcidWorldState i ss, HasSegment ss  "Users") => AWQuery i ss Int
+fetchUsersStats = fmap IxSet.size $ askSegment (Proxy :: Proxy "Users")
 
 
 generateUserIO :: IO User
@@ -115,7 +110,7 @@ generateUsers i = do
 
 
 type AppSegments = '["Users"]
-type AppEvents = '["insertUser", "fetchUsers", "fetchUsersStats"]
+type AppEvents = '["insertUser"]
 
 type AppAW s = AcidWorld AppSegments AppEvents s
 
@@ -130,28 +125,15 @@ mkTempDir = do
 
 
 
-{-
--- this isn't really that useful I think
-openAppAcidWorldWithDefaultState :: IO AppAW
-openAppAcidWorldWithDefaultState = do
-  t <- mkTempDir
-  us <- generateUsers (10^*5)
-  let iset = IxSet.fromList us
-  let def = defaultSegmentsState (Proxy :: Proxy AppSegments)
-      def' = putSegmentP (Proxy :: Proxy "Users") (Proxy :: Proxy AppSegments) iset def
-  aw <- openAcidWorld (Just def') (AWBConfigBackendFS t) AWUConfigStatePure
-  pure aw
--}
 
-
-openAppAcidWorldRestoreState :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, AcidSerialiseConstraint s AppSegments "fetchUsersStats" ) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
+openAppAcidWorldRestoreState :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
 openAppAcidWorldRestoreState opts s = do
   t <- mkTempDir
   let e = topLevelStoredStateDir <> "/" <> "testState" <> "/" <> s
   copyDirectory e t
-  aw <- throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure opts
+  aw <- throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWConfigStatePure opts
   -- this is to force the internal state
-  i <- runFetchUsersStats aw
+  i <- query aw fetchUsersStats
   putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
   pure aw
 
@@ -159,7 +141,7 @@ openAppAcidWorldRestoreState opts s = do
 openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => (AcidSerialiseEventOptions s) -> IO (AppAW s)
 openAppAcidWorldFresh opts = do
   t <- mkTempDir
-  throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWUConfigStatePure opts
+  throwEither $ openAcidWorld Nothing (AWBConfigBackendFS t) AWConfigStatePure opts
 
 closeAndReopen :: Middleware s
 closeAndReopen = reopenAcidWorldMiddleware . closeAcidWorldMiddleware
@@ -185,9 +167,6 @@ insertUsers i iAw = do
 runInsertUser :: AcidSerialiseConstraint s AppSegments "insertUser" => AppAW s -> User -> IO User
 runInsertUser aw u = update aw (mkEvent (Proxy :: Proxy ("insertUser")) u)
 
-
-runFetchUsersStats :: AcidSerialiseConstraint s  AppSegments "fetchUsersStats" => AppAW s -> IO Int
-runFetchUsersStats aw = update aw (mkEvent (Proxy :: Proxy ("fetchUsersStats")) )
 
 
 throwEither :: IO (Either Text a) -> IO a
