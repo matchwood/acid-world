@@ -32,6 +32,7 @@ library
   other-modules:
   build-depends:
     base,
+    bytestring,
     rio,
     generics-sop,
     mtl,

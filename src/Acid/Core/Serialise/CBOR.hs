@@ -16,10 +16,12 @@ import qualified  RIO.List as L
 import Acid.Core.Serialise.Abstract
 import qualified  RIO.ByteString.Lazy as BL
 import qualified  RIO.ByteString as BS
+import qualified  Data.ByteString.Lazy.Internal as BSInternal
 import qualified Codec.CBOR.Read as CBOR.Read
 import Codec.Serialise
 import Codec.Serialise.Encoding
 import Codec.Serialise.Decoding
+import Codec.CBOR.Write (toLazyByteString)
 import Generics.SOP
 import Generics.SOP.NP
 import qualified Data.UUID  as UUID
@@ -39,8 +41,8 @@ instance AcidSerialiseEvent AcidSerialiserCBOR where
   type AcidSerialiseT AcidSerialiserCBOR = BL.ByteString
   type AcidSerialiseParser AcidSerialiserCBOR ss nn = CBOREventParser ss nn
   serialiserName _ = "CBOR"
-  serialiseEvent _ se = serialise se
-  deserialiseEvent _ bs = left (T.pack . show) $ deserialiseOrFail bs
+  serialiseEvent o se = toLazyByteString $ serialiseCBOREvent o se
+  deserialiseEvent o bs = left (T.pack . show) $ decodeOrFail (deserialiseCBOREvent o) bs
   makeDeserialiseParsers _ _ _ = makeCBORParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserCBOR -> AcidSerialiseParsers AcidSerialiserCBOR ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
   deserialiseEventStream  _ ps = mapC BL.toStrict .| start
@@ -84,46 +86,13 @@ instance AcidSerialiseC AcidSerialiserCBOR where
 
 findCBORParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserCBOR ss nn -> BS.ByteString -> Either Text (Maybe (BS.ByteString, CBOREventParser ss nn))
 findCBORParserForWrappedEvent ps t =
-  case runST $ decodePartial decodeEventName t of
+  case runST $ decodePartial decode t of
     Left err -> Left err
     Right Nothing -> Right Nothing
     Right (Just (bs, name)) ->
       case HM.lookup name ps of
         Nothing -> Left $ "Could not find parser for event named " <> name
         Just p -> Right . Just $ (bs, p)
-  where
-    decodeEventName :: Decoder s Text
-    decodeEventName = do
-      len <- decodeListLen
-      tag <- decodeWord
-      case (len, tag) of
-        (5, 0) -> decode
-        _ -> fail "Expected a fixed length list of 5 and a '0' tag when finding event parser"
-
-
-{-
-  runST (supplyCurrentInput =<< CBOR.Read.deserialiseIncremental deserialiseNameAndFindParser)
-    where
-      supplyCurrentInput :: IDecode s (CBOREventParser ss nn) -> ST s (Either Text (Maybe (BS.ByteString, CBOREventParser ss nn)))
-      supplyCurrentInput (CBOR.Read.Partial k) = handleEndOfCurrentInput =<< k (Just t)
-      supplyCurrentInput a = handleEndOfCurrentInput a
-
-      handleEndOfCurrentInput :: IDecode s (CBOREventParser ss nn) -> ST s (Either Text (Maybe (BS.ByteString, CBOREventParser ss nn)))
-      handleEndOfCurrentInput (CBOR.Read.Done bs _ x) = pure $ Right (Just (bs, x))
-      handleEndOfCurrentInput (CBOR.Read.Partial _) = pure $ Right Nothing
-      handleEndOfCurrentInput (CBOR.Read.Fail _ _ err) = pure $ Left (T.pack $ show err)
-      deserialiseNameAndFindParser :: Decoder s (CBOREventParser ss nn)
-      deserialiseNameAndFindParser = do
-        len <- decodeListLen
-        tag <- decodeWord
-        case (len, tag) of
-          (5, 0) -> do
-            name <- decode
-            case HM.lookup name ps of
-              Nothing -> fail $ "Could not find parser for event named " <> T.unpack name
-              Just p -> pure p
-          _ -> fail "Expected a fixed length list of 5 and a '0' tag when decoding WrappedEvent"
--}
 
 
 
@@ -149,38 +118,55 @@ decodePartial decoder t = (supplyCurrentInput =<< CBOR.Read.deserialiseIncrement
     handleEndOfCurrentInput (CBOR.Read.Partial _) = pure $ Right Nothing
     handleEndOfCurrentInput (CBOR.Read.Fail _ _ err) = pure $ Left (T.pack $ show err)
 
+decodeOrFail :: (forall s. Decoder s a) -> BL.ByteString -> Either CBOR.Read.DeserialiseFailure a
+decodeOrFail decoder bs0 =
+    runST (supplyAllInput bs0 =<< CBOR.Read.deserialiseIncremental decoder)
+  where
+    supplyAllInput _bs (CBOR.Read.Done _ _ x) = return (Right x)
+    supplyAllInput  bs (CBOR.Read.Partial k)  =
+      case bs of
+        BSInternal.Chunk chunk bs' -> k (Just chunk) >>= supplyAllInput bs'
+        BSInternal.Empty           -> k Nothing      >>= supplyAllInput BSInternal.Empty
+    supplyAllInput _ (CBOR.Read.Fail _ _ exn) = return (Left exn)
+
 decodeWrappedEventCBOR :: forall n ss nn. (CanSerialiseCBOR ss n) => Proxy n -> CBOREventParser ss nn
 decodeWrappedEventCBOR _ t = runST $ decodePartial doDeserialiseWrappedEvent t
   where
     doDeserialiseWrappedEvent :: Decoder s (WrappedEvent ss nn)
     doDeserialiseWrappedEvent = do
-        (se :: StorableEvent ss nn n) <- deserialiseStorableEventBody
+        (se :: StorableEvent ss nn n) <- decode
         pure $ WrappedEvent se
+
+serialiseCBOREvent :: forall ss nn n. (CanSerialiseCBOR ss n) => AcidSerialiseEventOptions AcidSerialiserCBOR -> StorableEvent ss nn n -> Encoding
+serialiseCBOREvent _ se = encode (toUniqueText (Proxy :: Proxy n)) <> encode se
+
+
+
+deserialiseCBOREvent :: (CanSerialiseCBOR ss n) => AcidSerialiseEventOptions AcidSerialiserCBOR -> Decoder s (StorableEvent ss nn n)
+deserialiseCBOREvent _ = do
+  (_ :: Text) <- decode
+  decode
+
 
 
 instance (CanSerialiseCBOR ss n) => Serialise (StorableEvent ss nn n) where
   encode (StorableEvent t ui (Event xs :: Event n)) =
-    encodeListLen 5 <>
+    encodeListLen 4 <>
     encodeWord 0 <>
-    encode (toUniqueText (Proxy :: Proxy n)) <>
     encode t <>
     encode ui <>
     encode xs
   decode = do
-    let expectedName = toUniqueText (Proxy :: Proxy n)
     len <- decodeListLen
     tag <- decodeWord
-    name <- decode
-    case (len, tag, name == expectedName) of
-      (5, 0, True) -> deserialiseStorableEventBody
-      (_,_,_) -> fail $ "Expected (listLength, tag, eventName) of (5, 0, " <> T.unpack expectedName <> " but got (" <> L.intercalate ", " [show len, show tag, show name] <> ")"
+    case (len, tag) of
+      (4, 0) -> do
+        t <- decode
+        uid <- decode
+        args <- decode
+        pure $ StorableEvent t uid ((Event args) :: Event n)
+      (_,_) -> fail $ "Expected (listLength, tag) of (4, 0)" <> "but got (" <> L.intercalate ", " [show len, show tag] <> ")"
 
-deserialiseStorableEventBody :: forall s ss nn n. (CanSerialiseCBOR ss n) => Decoder s (StorableEvent ss nn n)
-deserialiseStorableEventBody = do
-    t <- decode
-    uid <- decode
-    args <- decode
-    pure $ StorableEvent t uid ((Event args) :: Event n)
 
 instance Serialise EventId where
   encode = encodeBytes . BL.toStrict . UUID.toByteString . uuidFromEventId
@@ -189,18 +175,6 @@ instance Serialise EventId where
     case UUID.fromByteString bs of
       Nothing -> fail $ "Could not parse UUID from bytestring " <> show bs
       Just uuid -> pure . EventId $ uuid
-
-{-
-instance (ValidEventNameAndFromCBOR ss n, EventArgs n ~ xs) => Serialise (WrappedEventT ss nn n) where
-  encode = fail "WrappedEventTs cannot be encoded, use a StorableEvent instead"
-  decode = do
-
-    t <- decode
-    uid <- decode
-    args <- decode
-
-    return $ WrappedEventT (WrappedEvent t uid ((Event args) :: Event n))
--}
 
 instance (All Serialise xs) => Serialise (EventArgsContainer xs) where
   encode (EventArgsContainer np) = encodeListLenIndef <>
