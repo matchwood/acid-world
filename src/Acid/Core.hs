@@ -50,7 +50,7 @@ openAcidWorld mDefSt acidWorldBackendConfig acidWorldStateConfig acidWorldSerial
     Right acidWorldBackendState -> do
       let parsers = makeDeserialiseParsers acidWorldSerialiserOptions (Proxy :: Proxy ss) (Proxy :: Proxy nn)
       let handles = BackendHandles {
-              bhLoadEvents = (loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState) :: m (ConduitT i (WrappedEvent ss nn) (ResourceT IO) ()),
+              bhLoadEvents = (loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState) :: m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),
               bhGetLastCheckpointState = getLastCheckpointState (Proxy :: Proxy ss) acidWorldBackendState
             }
 

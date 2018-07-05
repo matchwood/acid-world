@@ -47,8 +47,8 @@ class (AcidWorldState i, Monad (AWUpdate i ss), Monad (AWQuery i ss)) => ValidAc
 instance (AcidWorldState i, Monad (AWUpdate i ss), Monad (AWQuery i ss)) => ValidAcidWorldState i ss
 
 data BackendHandles m ss nn = BackendHandles {
-    bhLoadEvents :: forall i. MonadIO m => m (ConduitT i (WrappedEvent ss nn) (ResourceT IO) ()),
-    bhGetLastCheckpointState :: MonadIO m => m (Maybe (SegmentsState ss))
+    bhLoadEvents :: forall i. MonadIO m => m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),
+    bhGetLastCheckpointState :: MonadIO m => m ((Either Text (Maybe (SegmentsState ss))))
   }
 
 
@@ -62,9 +62,6 @@ class ToUniqueText (a :: k) where
 
 instance (KnownSymbol a) => ToUniqueText (a :: Symbol) where
   toUniqueText = T.pack . symbolVal
-
-instance (ToUniqueText a, ToUniqueText b) => ToUniqueText '(a, b) where
-  toUniqueText _ =  (toUniqueText (Proxy :: Proxy a) <> "_" <> toUniqueText (Proxy :: Proxy b))
 
 
 class (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsValidEvent ss nn (n :: Symbol)

@@ -41,12 +41,26 @@ instance AcidWorldState AcidStatePureState where
     pure $ V.getField $ V.rgetf (V.Label :: V.Label s) r
   initialiseState _ (BackendHandles{..}) defState = do
     mCpState <- bhGetLastCheckpointState
-    let startState = fromMaybe defState mCpState
-    weStream <- bhLoadEvents
-    s <- liftIO $ runConduitRes $ weStream .| foldlC applyToState startState
-    tvar <- liftIO $ STM.atomically $ TVar.newTVar s
-    pure . pure $ AWStatePureState tvar
+
+    case mCpState of
+      (Left err) -> pure $ Left err
+      Right cpState -> do
+        let startState = fromMaybe defState cpState
+        weStream <- bhLoadEvents
+        eS <- liftIO $ runConduitRes $ weStream .| breakOnLeft applyToState startState
+        case eS of
+          Left err -> pure $ Left err
+          Right s -> do
+            tvar <- liftIO $ STM.atomically $ TVar.newTVar s
+            pure . pure $ AWStatePureState tvar
     where
+      breakOnLeft :: (Monad m) => (s -> a -> s) -> s -> ConduitT (Either Text a) o m (Either Text s)
+      breakOnLeft f = loop
+        where
+          loop !s = await >>= maybe (return $ Right s) go
+            where
+              go (Left err) = pure (Left err)
+              go (Right a) = loop (f s a)
       applyToState :: SegmentsState ss -> WrappedEvent ss nn -> SegmentsState ss
       applyToState s e =
         let (AWUpdatePureState stm) = runWrappedEvent e

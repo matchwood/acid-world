@@ -135,7 +135,7 @@ unit_insertAndFetchState b o step = do
 
 unit_insertAndRestoreState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => IO (AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
 unit_insertAndRestoreState b o step = do
-  us <- QC.generate $ generateUsers 10000
+  us <- QC.generate $ generateUsers 1000
   step "Opening acid world"
   aw <- openAppAcidWorldFresh b o
   step "Inserting users"
