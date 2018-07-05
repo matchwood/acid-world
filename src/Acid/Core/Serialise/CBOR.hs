@@ -43,14 +43,12 @@ instance AcidSerialiseEvent AcidSerialiserCBOR where
   deserialiseEvent o bs = left (T.pack . show) $ decodeOrFail (deserialiseCBOREvent o) bs
   makeDeserialiseParsers _ _ _ = makeCBORParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserCBOR -> AcidSerialiseParsers AcidSerialiserCBOR ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
-  deserialiseEventStream  _ ps = start
+  deserialiseEventStream  _ ps = awaitForever (loop Nothing)
     where
-      start :: ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ()
-      start = await >>= maybe (return ()) (loop Nothing)
       loop :: (Maybe (CBOREventParser ss nn)) -> BS.ByteString ->  ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ()
       loop Nothing t = do
         case findCBORParserForWrappedEvent ps t of
-          Left err -> yield (Left err) >> await >>= maybe (return ()) (loop Nothing)
+          Left err -> yield (Left err) >> awaitForever (loop Nothing)
           Right Nothing -> do
             mt <- await
             case mt of
@@ -59,13 +57,13 @@ instance AcidSerialiseEvent AcidSerialiserCBOR where
           Right (Just (bs, p)) -> (loop (Just p) bs)
       loop (Just p) t =
         case p t of
-          Left err -> yield (Left err) >> await >>= maybe (return ()) (loop Nothing)
+          Left err -> yield (Left err) >> awaitForever (loop Nothing)
           Right Nothing -> do
             mt <- await
             case mt of
               Nothing -> yield $  Left $ "Unexpected end of conduit values when named event has only been partially parsed"
               Just nt -> loop (Just p) (t <> nt)
-          Right (Just (bs, e)) -> yield (Right e) >> (if BS.null bs then  await >>= maybe (return ()) (loop Nothing) else loop Nothing bs)
+          Right (Just (bs, e)) -> yield (Right e) >> (if BS.null bs then  awaitForever (loop Nothing) else loop Nothing bs)
 
 
 

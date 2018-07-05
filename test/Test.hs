@@ -4,7 +4,6 @@ import Shared.App
 
 import RIO
 import qualified RIO.Text as T
-import qualified  RIO.ByteString as BS
 
 import Data.Proxy(Proxy(..))
 import Acid.World
