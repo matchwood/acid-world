@@ -17,40 +17,8 @@ import qualified Test.QuickCheck.Property as QCP
 
 
 
-type AppValidSerialiserConstraint s = (
-  AcidSerialiseEvent s,
-  AcidSerialiseConstraintAll s AppSegments AppEvents,
-  AcidSerialiseT s ~ BS.ByteString,
-  AcidSerialiseConstraint s AppSegments "insertUser"
-  )
-
-type AppValidBackendConstraint b = (
-  AcidWorldBackend b,
-  AWBSerialiseT b ~ BS.ByteString
-  )
 
 
-data AppValidSerialiser where
-  AppValidSerialiser :: (AppValidSerialiserConstraint s) => AcidSerialiseEventOptions s -> AppValidSerialiser
-
-allSerialisers :: [AppValidSerialiser]
-allSerialisers = [
-    AppValidSerialiser AcidSerialiserJSONOptions
-  , AppValidSerialiser AcidSerialiserCBOROptions
-  , AppValidSerialiser AcidSerialiserSafeCopyOptions
-  ]
-
-data AppValidBackend where
-  AppValidBackend :: (AppValidBackendConstraint b) => IO (AWBConfig b) -> AppValidBackend
-
-persistentBackends :: [AppValidBackend]
-persistentBackends = [AppValidBackend $ fmap AWBConfigFS mkTempDir]
-
-ephemeralBackends :: [AppValidBackend]
-ephemeralBackends = [AppValidBackend $ pure AWBConfigMemory]
-
-allBackends :: [AppValidBackend]
-allBackends = persistentBackends ++ ephemeralBackends
 
 withBackends :: (AppValidBackend -> AppValidSerialiser -> [TestTree]) -> [(AppValidBackend, [AppValidSerialiser])] -> [TestTree]
 withBackends f os =
