@@ -7,6 +7,7 @@ import RIO
 import qualified  RIO.HashMap as HM
 import qualified  RIO.Text as T
 import qualified  RIO.ByteString.Lazy as BL
+import qualified  RIO.ByteString as BS
 import qualified  RIO.Vector as V
 
 import Control.Arrow (left)
@@ -31,19 +32,19 @@ data AcidSerialiserJSON
 
 instance AcidSerialiseEvent AcidSerialiserJSON where
   data AcidSerialiseEventOptions AcidSerialiserJSON = AcidSerialiserJSONOptions
-  type AcidSerialiseT AcidSerialiserJSON = BL.ByteString
+  type AcidSerialiseT AcidSerialiserJSON = BS.ByteString
   type AcidSerialiseParser AcidSerialiserJSON ss nn = (Object -> Either Text (WrappedEvent ss nn))
-  serialiseEvent _ se = (Aeson.encode se) <> "\n"
-  deserialiseEvent _ t = left (T.pack) $ (Aeson.eitherDecode' t)
+  serialiseEvent _ se = BL.toStrict $ (Aeson.encode se) <> "\n"
+  deserialiseEvent _ t = left (T.pack) $ (Aeson.eitherDecode' (BL.fromStrict t))
   makeDeserialiseParsers _ _ _ = makeJSONParsers
-  deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
+  deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
   deserialiseEventStream  _ ps =
         linesUnboundedAsciiC .|
           mapC deserialiser
     where
-      deserialiser :: BL.ByteString -> Either Text (WrappedEvent ss nn )
+      deserialiser :: BS.ByteString -> Either Text (WrappedEvent ss nn )
       deserialiser bs = do
-        (hm :: HM.HashMap Text Value) <- left (T.pack) $ Aeson.eitherDecode' bs
+        (hm :: HM.HashMap Text Value) <- left (T.pack) $ Aeson.eitherDecode' (BL.fromStrict bs)
         case HM.lookup "n" hm of
           Just (String s) -> do
             case HM.lookup s ps of

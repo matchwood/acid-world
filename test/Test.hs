@@ -4,7 +4,7 @@ import Shared.App
 
 import RIO
 import qualified RIO.Text as T
-import qualified  RIO.ByteString.Lazy as BL
+import qualified  RIO.ByteString as BS
 
 import Data.Proxy(Proxy(..))
 import Acid.World
@@ -20,13 +20,13 @@ import qualified Test.QuickCheck.Property as QCP
 type AppValidSerialiserConstraint s = (
   AcidSerialiseEvent s,
   AcidSerialiseConstraintAll s AppSegments AppEvents,
-  AcidSerialiseT s ~ BL.ByteString,
+  AcidSerialiseT s ~ BS.ByteString,
   AcidSerialiseConstraint s AppSegments "insertUser"
   )
 
 type AppValidBackendConstraint b = (
   AcidWorldBackend b,
-  AWBSerialiseT b ~ BL.ByteString
+  AWBSerialiseT b ~ BS.ByteString
   )
 
 

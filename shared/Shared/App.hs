@@ -4,7 +4,7 @@
 module Shared.App where
 
 import RIO
-import qualified  RIO.ByteString.Lazy as BL
+import qualified  RIO.ByteString as BS
 
 import Prelude(userError, putStrLn)
 import qualified RIO.Text as T
@@ -126,7 +126,7 @@ mkTempDir = do
 
 
 
-openAppAcidWorldRestoreState :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
+openAppAcidWorldRestoreState :: (AcidSerialiseT s ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
 openAppAcidWorldRestoreState opts s = do
   t <- mkTempDir
   let e = topLevelStoredStateDir <> "/" <> "testState" <> "/" <> s
@@ -137,14 +137,14 @@ openAppAcidWorldRestoreState opts s = do
   putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
   pure aw
 
-openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AcidWorldBackend b, AWBSerialiseT b ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => IO (AWBConfig b) -> (AcidSerialiseEventOptions s) -> IO (AppAW s)
+openAppAcidWorldFresh :: (AcidSerialiseT s ~ BS.ByteString, AcidWorldBackend b, AWBSerialiseT b ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => IO (AWBConfig b) -> (AcidSerialiseEventOptions s) -> IO (AppAW s)
 openAppAcidWorldFresh bConfIO opts = do
   bConf <- bConfIO
 
   throwEither $ openAcidWorld Nothing bConf AWConfigPureState opts
 
 
-openAppAcidWorldFreshFS :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => (AcidSerialiseEventOptions s) -> IO (AppAW s)
+openAppAcidWorldFreshFS :: (AcidSerialiseT s ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => (AcidSerialiseEventOptions s) -> IO (AppAW s)
 openAppAcidWorldFreshFS opts = openAppAcidWorldFresh (fmap AWBConfigFS mkTempDir) opts
 
 closeAndReopen :: Middleware s

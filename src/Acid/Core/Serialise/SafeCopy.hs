@@ -7,7 +7,6 @@ import RIO
 import qualified  RIO.HashMap as HM
 import qualified  RIO.Text as T
 import qualified  RIO.ByteString as BS
-import qualified  RIO.ByteString.Lazy as BL
 
 import Control.Arrow (left)
 import Generics.SOP
@@ -31,13 +30,13 @@ type SafeCopyEventParser ss nn = (BS.ByteString -> Either Text (Maybe (BS.ByteSt
 
 instance AcidSerialiseEvent AcidSerialiserSafeCopy where
   data AcidSerialiseEventOptions AcidSerialiserSafeCopy = AcidSerialiserSafeCopyOptions
-  type AcidSerialiseT AcidSerialiserSafeCopy = BL.ByteString
+  type AcidSerialiseT AcidSerialiserSafeCopy = BS.ByteString
   type AcidSerialiseParser AcidSerialiserSafeCopy ss nn = SafeCopyEventParser ss nn
-  serialiseEvent o se = runPutLazy $ serialiseSafeCopyEvent o se
-  deserialiseEvent o t = left (T.pack) $ runGetLazy (deserialiseSafeCopyEvent o) t
+  serialiseEvent o se = runPut $ serialiseSafeCopyEvent o se
+  deserialiseEvent o t = left (T.pack) $ runGet (deserialiseSafeCopyEvent o) t
   makeDeserialiseParsers _ _ _ = makeSafeCopyParsers
-  deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserSafeCopy -> AcidSerialiseParsers AcidSerialiserSafeCopy ss nn -> (ConduitT BL.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
-  deserialiseEventStream  _ ps = mapC BL.toStrict .| start
+  deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserSafeCopy -> AcidSerialiseParsers AcidSerialiserSafeCopy ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
+  deserialiseEventStream  _ ps = start
     where
       start :: ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ()
       start = await >>= maybe (return ()) (loop Nothing)

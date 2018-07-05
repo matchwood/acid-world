@@ -16,7 +16,6 @@ import qualified  RIO.List as L
 import Acid.Core.Serialise.Abstract
 import qualified  RIO.ByteString.Lazy as BL
 import qualified  RIO.ByteString as BS
-import qualified  Data.ByteString.Lazy.Internal as BSInternal
 import qualified Codec.CBOR.Read as CBOR.Read
 import Codec.Serialise
 import Codec.Serialise.Encoding
@@ -122,7 +121,7 @@ decodeOrFail decoder bs0 =
     runST (supplyAllInput bs0 =<< CBOR.Read.deserialiseIncremental decoder)
   where
     supplyAllInput _bs (CBOR.Read.Done _ _ x) = return (Right x)
-    supplyAllInput  bs (CBOR.Read.Partial k)  = k (Just bs) >>= supplyAllInput Nothing
+    supplyAllInput  bs (CBOR.Read.Partial k)  = k (Just bs) >>= supplyAllInput BS.empty
     supplyAllInput _ (CBOR.Read.Fail _ _ exn) = return (Left exn)
 
 decodeWrappedEventCBOR :: forall n ss nn. (CanSerialiseCBOR ss n) => Proxy n -> CBOREventParser ss nn
