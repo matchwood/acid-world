@@ -20,25 +20,24 @@ data AcidStatePureState
 
 
 
-instance AcidWorldState AcidStatePureState ss where
-  data AWState AcidStatePureState ss = AWStateStatePure {
-      aWStateStatePure :: !(TVar (SegmentsState ss)),
-      aWStateStateDefState :: !(SegmentsState ss)
+instance AcidWorldState AcidStatePureState where
+  data AWState AcidStatePureState ss = AWStatePureState {
+      aWStatePureStateState :: !(TVar (SegmentsState ss))
     }
-  data AWConfig AcidStatePureState ss = AWConfigStatePure
+  data AWConfig AcidStatePureState ss = AWConfigPureState
 
-  newtype AWUpdate AcidStatePureState ss a = AWUpdateStatePure (St.State (SegmentsState ss) a)
+  newtype AWUpdate AcidStatePureState ss a = AWUpdatePureState (St.State (SegmentsState ss) a)
     deriving (Functor, Applicative, Monad)
-  newtype AWQuery AcidStatePureState ss a = AWQueryStatePure (Re.Reader (SegmentsState ss) a)
+  newtype AWQuery AcidStatePureState ss a = AWQueryPureState (Re.Reader (SegmentsState ss) a)
     deriving (Functor, Applicative, Monad)
   getSegment (Proxy :: Proxy s) = do
-    r <- AWUpdateStatePure St.get
+    r <- AWUpdatePureState St.get
     pure $ V.getField $ V.rgetf (V.Label :: V.Label s) r
   putSegment (Proxy :: Proxy s) seg = do
-    r <- AWUpdateStatePure St.get
-    AWUpdateStatePure (St.put $ V.rputf (V.Label :: V.Label s) seg r)
+    r <- AWUpdatePureState St.get
+    AWUpdatePureState (St.put $ V.rputf (V.Label :: V.Label s) seg r)
   askSegment (Proxy :: Proxy s) = do
-    r <- AWQueryStatePure Re.ask
+    r <- AWQueryPureState Re.ask
     pure $ V.getField $ V.rgetf (V.Label :: V.Label s) r
   initialiseState _ (BackendHandles{..}) defState = do
     mCpState <- bhGetLastCheckpointState
@@ -46,25 +45,25 @@ instance AcidWorldState AcidStatePureState ss where
     weStream <- bhLoadEvents
     s <- liftIO $ runConduitRes $ weStream .| foldlC applyToState startState
     tvar <- liftIO $ STM.atomically $ TVar.newTVar s
-    pure . pure $ AWStateStatePure tvar defState
+    pure . pure $ AWStatePureState tvar
     where
       applyToState :: SegmentsState ss -> WrappedEvent ss nn -> SegmentsState ss
       applyToState s e =
-        let (AWUpdateStatePure stm) = runWrappedEvent e
+        let (AWUpdatePureState stm) = runWrappedEvent e
         in snd $ St.runState stm s
-
+  runUpdate :: forall ss n m. ( ValidEventName ss n , MonadIO m) => AWState AcidStatePureState ss -> Event n -> m (EventResult n)
   runUpdate awState (Event xs :: Event n) = do
-    let (AWUpdateStatePure stm :: ((AWUpdate AcidStatePureState)   ss (EventResult n))) = runEvent (Proxy :: Proxy n) xs
+    let (AWUpdatePureState stm :: ((AWUpdate AcidStatePureState)   ss (EventResult n))) = runEvent (Proxy :: Proxy n) xs
     liftIO $ STM.atomically $ do
-      s <- STM.readTVar (aWStateStatePure awState)
+      s <- STM.readTVar (aWStatePureStateState awState)
       (!a, !s') <- pure $ St.runState stm s
-      STM.writeTVar (aWStateStatePure awState) s'
+      STM.writeTVar (aWStatePureStateState awState) s'
       return a
 
-  runQuery awState (AWQueryStatePure q) = do
+  runQuery awState (AWQueryPureState q) = do
     liftIO $ STM.atomically $ do
-      s <- STM.readTVar (aWStateStatePure awState)
+      s <- STM.readTVar (aWStatePureStateState awState)
       pure $ Re.runReader q s
-  liftQuery (AWQueryStatePure q) = do
-    s <- AWUpdateStatePure St.get
+  liftQuery (AWQueryPureState q) = do
+    s <- AWUpdatePureState St.get
     pure $ Re.runReader q s

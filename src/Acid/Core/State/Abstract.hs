@@ -27,22 +27,24 @@ the main definition of an state managing strategy
 -}
 
 
-class (Monad (AWUpdate i ss), Monad (AWQuery i ss)) => AcidWorldState (i :: *) ss where
-  data AWState i ss
-  data AWConfig i ss
-  data AWUpdate i ss a
-  data AWQuery i ss a
+class AcidWorldState (i :: *) where
+  data AWState i (ss :: [Symbol])
+  data AWConfig i (ss :: [Symbol])
+  data AWUpdate i (ss :: [Symbol]) a
+  data AWQuery i (ss :: [Symbol]) a
   initialiseState :: (MonadIO z, MonadThrow z) => AWConfig i ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState i ss))
   closeState :: (MonadIO z) => AWState i ss -> z ()
   closeState _ = pure ()
   getSegment :: (HasSegment ss s) =>  Proxy s -> AWUpdate i ss (SegmentS s)
   putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> AWUpdate i ss ()
   askSegment :: (HasSegment ss s) =>  Proxy s -> AWQuery i ss (SegmentS s)
-  runUpdate :: ( ValidEventName ss n
-                    , MonadIO z) =>
-    AWState i ss -> Event n -> z (EventResult n)
-  runQuery :: (MonadIO z) => AWState i ss -> AWQuery i ss a -> z a
+  runUpdate :: ( ValidEventName ss n , MonadIO m) => AWState i ss -> Event n -> m (EventResult n)
+  runQuery :: (MonadIO m) => AWState i ss -> AWQuery i ss a -> m a
   liftQuery :: AWQuery i ss a -> AWUpdate i ss a
+
+
+class (AcidWorldState i, Monad (AWUpdate i ss), Monad (AWQuery i ss)) => ValidAcidWorldState i ss
+instance (AcidWorldState i, Monad (AWUpdate i ss), Monad (AWQuery i ss)) => ValidAcidWorldState i ss
 
 data BackendHandles m ss nn = BackendHandles {
     bhLoadEvents :: forall i. MonadIO m => m (ConduitT i (WrappedEvent ss nn) (ResourceT IO) ()),
@@ -60,6 +62,9 @@ class ToUniqueText (a :: k) where
 
 instance (KnownSymbol a) => ToUniqueText (a :: Symbol) where
   toUniqueText = T.pack . symbolVal
+
+instance (ToUniqueText a, ToUniqueText b) => ToUniqueText '(a, b) where
+  toUniqueText _ =  (toUniqueText (Proxy :: Proxy a) <> "_" <> toUniqueText (Proxy :: Proxy b))
 
 
 class (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsValidEvent ss nn (n :: Symbol)
@@ -85,8 +90,7 @@ class (ToUniqueText n, SListI (EventArgs n), All Eq (EventArgs n), All Show (Eve
   type EventArgs n :: [*]
   type EventResult n :: *
   type EventSegments n :: [Symbol]
-  runEvent :: (AcidWorldState i ss, HasSegments ss (EventSegments n)) => Proxy n -> EventArgsContainer (EventArgs n) -> AWUpdate i ss (EventResult n)
-
+  runEvent :: (ValidAcidWorldState i ss, HasSegments ss (EventSegments n)) => Proxy n -> EventArgsContainer (EventArgs n) -> AWUpdate i ss (EventResult n)
 
 
 
@@ -140,7 +144,7 @@ data WrappedEvent ss nn where
 instance Show (WrappedEvent ss nn) where
   show (WrappedEvent se) = "WrappedEvent: " <> show se
 
-runWrappedEvent :: AcidWorldState i ss => WrappedEvent ss e -> AWUpdate i ss ()
+runWrappedEvent :: ValidAcidWorldState i ss => WrappedEvent ss e -> AWUpdate i ss ()
 runWrappedEvent (WrappedEvent (StorableEvent _ _ (Event xs :: Event n))) = void $ runEvent (Proxy :: Proxy n) xs
 
 

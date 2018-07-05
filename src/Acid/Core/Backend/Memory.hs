@@ -20,7 +20,6 @@ instance AcidWorldBackend AcidWorldBackendMemory where
   data AWBState AcidWorldBackendMemory = AWBStateMemory
   data AWBConfig AcidWorldBackendMemory = AWBConfigMemory
   type AWBSerialiseT AcidWorldBackendMemory = BL.ByteString
-  backendName _ = "Memory"
   initialiseBackend _ _ _  = pure . pure $ AWBStateMemory
   handleUpdateEvent _ _ awu e = runUpdate awu e
 

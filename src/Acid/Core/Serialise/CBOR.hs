@@ -40,7 +40,6 @@ instance AcidSerialiseEvent AcidSerialiserCBOR where
   data AcidSerialiseEventOptions AcidSerialiserCBOR = AcidSerialiserCBOROptions
   type AcidSerialiseT AcidSerialiserCBOR = BL.ByteString
   type AcidSerialiseParser AcidSerialiserCBOR ss nn = CBOREventParser ss nn
-  serialiserName _ = "CBOR"
   serialiseEvent o se = toLazyByteString $ serialiseCBOREvent o se
   deserialiseEvent o bs = left (T.pack . show) $ decodeOrFail (deserialiseCBOREvent o) bs
   makeDeserialiseParsers _ _ _ = makeCBORParsers

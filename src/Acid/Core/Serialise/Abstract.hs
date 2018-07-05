@@ -12,20 +12,22 @@ import GHC.Exts (Constraint)
 import Data.Proxy(Proxy(..))
 
 import Acid.Core.State
+import Data.Typeable
 
 import Conduit
 
 
 {-
 
-  This is a fiddly setup. The issue is that we want to abstract serialisation in a context where we are parsing to constrained types. The general approach here is to
-
+  This is a fiddly setup. The issue is that we want to abstract serialisation in a context where we are parsing to constrained types. The general approach is to construct a text indexed map of parsers specialised to a specific type and serialise the text key along with the event data
 -}
-class AcidSerialiseEvent t where
+class AcidSerialiseEvent (t :: k) where
   data AcidSerialiseEventOptions t :: *
   type AcidSerialiseT t :: *
   type AcidSerialiseParser t (ss :: [Symbol]) (nn :: [Symbol]) :: *
   serialiserName :: Proxy t -> Text
+  default serialiserName :: (Typeable t) => Proxy t -> Text
+  serialiserName p = T.pack $ (showsTypeRep . typeRep $ p) ""
   serialiseEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> StorableEvent ss nn n -> AcidSerialiseT t
   deserialiseEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> (Either Text (StorableEvent ss nn n))
   makeDeserialiseParsers :: (ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn) => AcidSerialiseEventOptions t -> Proxy ss -> Proxy nn -> AcidSerialiseParsers t ss nn
@@ -38,12 +40,6 @@ class AcidSerialiseC t where
   type AcidSerialiseConstraintAll t (ss :: [Symbol]) (nn :: [Symbol]) :: Constraint
 
 type AcidSerialiseParsers t ss nn = HM.HashMap Text (AcidSerialiseParser t ss nn)
-
-{-lookupParser :: (AcidSerialiseEvent t) =>  Proxy t -> Proxy ss -> Proxy nn -> Text -> AcidSerialiseParsers t ss nn -> Either Text (AcidSerialiseParser t ss nn)
-lookupParser tp _ _ name ps =
-  case HM.lookup name ps of
-    Nothing -> Left $ "Could not find parser for event named " <>  name <> " for serialiser " <> serialiserName tp
-    Just p -> pure p-}
 
 
 deserialiseWrappedEvent :: forall t ss (nn :: [Symbol]). (AcidSerialiseEvent t, ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> Either Text (WrappedEvent ss nn)

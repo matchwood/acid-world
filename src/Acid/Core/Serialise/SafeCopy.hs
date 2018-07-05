@@ -33,7 +33,6 @@ instance AcidSerialiseEvent AcidSerialiserSafeCopy where
   data AcidSerialiseEventOptions AcidSerialiserSafeCopy = AcidSerialiserSafeCopyOptions
   type AcidSerialiseT AcidSerialiserSafeCopy = BL.ByteString
   type AcidSerialiseParser AcidSerialiserSafeCopy ss nn = SafeCopyEventParser ss nn
-  serialiserName _ = "SafeCopy"
   serialiseEvent o se = runPutLazy $ serialiseSafeCopyEvent o se
   deserialiseEvent o t = left (T.pack) $ runGetLazy (deserialiseSafeCopyEvent o) t
   makeDeserialiseParsers _ _ _ = makeSafeCopyParsers

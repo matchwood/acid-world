@@ -4,18 +4,21 @@
 
 module Acid.Core.Backend.Abstract where
 import RIO
-
+import qualified RIO.Text as T
+import Data.Typeable
 import Data.Proxy(Proxy(..))
 
 import Acid.Core.Segment
 import Acid.Core.State
 import Conduit
 
-class AcidWorldBackend b where
+class AcidWorldBackend (b :: k) where
   data AWBState b
   data AWBConfig b
   type AWBSerialiseT b :: *
   backendName :: Proxy b -> Text
+  default backendName :: (Typeable b) => Proxy b -> Text
+  backendName p = T.pack $ (showsTypeRep . typeRep $ p) ""
   initialiseBackend :: (MonadIO m) => Proxy ss -> AWBConfig b -> (SegmentsState ss) -> m (Either Text (AWBState b))
   closeBackend :: (MonadIO m) => AWBState b -> m ()
   closeBackend _ = pure ()
@@ -26,5 +29,5 @@ class AcidWorldBackend b where
   -- return events since the last checkpoint, if any
   loadEvents :: (MonadIO m) => (ConduitT (AWBSerialiseT b) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->  AWBState b -> m (ConduitT i (WrappedEvent ss nn) (ResourceT IO) ())
   loadEvents _ _ = pure $ yieldMany []
-  handleUpdateEvent :: (IsValidEvent ss nn n, MonadIO m, AcidWorldState u ss) => (StorableEvent ss nn n -> AWBSerialiseT b) ->  (AWBState b) -> (AWState u ss) -> Event n -> m (EventResult n)
+  handleUpdateEvent :: (IsValidEvent ss nn n, MonadIO m, ValidAcidWorldState u ss) => (StorableEvent ss nn n -> AWBSerialiseT b) ->  (AWBState b) -> (AWState u ss) -> Event n -> m (EventResult n)
 

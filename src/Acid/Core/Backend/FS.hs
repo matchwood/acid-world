@@ -28,7 +28,6 @@ instance AcidWorldBackend AcidWorldBackendFS where
     aWBConfigFSStateDir :: FilePath
   }
   type AWBSerialiseT AcidWorldBackendFS  = BL.ByteString
-  backendName _ = "FileSystem"
   initialiseBackend _ c _  = do
     stateP <- Dir.makeAbsolute (aWBConfigFSStateDir c)
     Dir.createDirectoryIfMissing True stateP

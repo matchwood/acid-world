@@ -15,7 +15,7 @@ import Conduit
 data AcidWorld  ss nn t where
   AcidWorld :: (
                  AcidWorldBackend b
-               , AcidWorldState uMonad ss
+               , ValidAcidWorldState uMonad ss
                , AcidSerialiseEvent t
                , AcidSerialiseT t ~ AWBSerialiseT b
                , AcidSerialiseConstraintAll t ss nn
@@ -35,7 +35,7 @@ openAcidWorld :: forall m ss nn b uMonad t.
                ( MonadIO m
                , MonadThrow m
                , AcidWorldBackend b
-               , AcidWorldState uMonad ss
+               , ValidAcidWorldState uMonad ss
                , AcidSerialiseEvent t
                , AcidSerialiseT t ~ AWBSerialiseT b
                , AcidSerialiseConstraintAll t ss nn
@@ -72,7 +72,7 @@ update :: forall ss nn n m t. (IsValidEvent ss nn n, MonadIO m, AcidSerialiseCon
 update (AcidWorld {..}) = handleUpdateEvent ((serialiseEvent acidWorldSerialiserOptions) :: StorableEvent ss nn n -> AcidSerialiseT t)  acidWorldBackendState acidWorldState
 
 
-query ::forall ss nn t m a. MonadIO m => AcidWorld ss nn t -> (forall i. AcidWorldState i ss => AWQuery i ss a) -> m a
+query ::forall ss nn t m a. MonadIO m => AcidWorld ss nn t -> (forall i. ValidAcidWorldState i ss => AWQuery i ss a) -> m a
 query (AcidWorld {..}) q = runQuery acidWorldState q
 
 

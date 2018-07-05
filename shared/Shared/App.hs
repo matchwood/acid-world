@@ -76,7 +76,7 @@ instance Segment "Users" where
   defaultState _ = IxSet.empty
 
 
-insertUser :: (AcidWorldState i ss, HasSegment ss  "Users") => User -> AWUpdate i ss User
+insertUser :: (ValidAcidWorldState i ss, HasSegment ss  "Users") => User -> AWUpdate i ss User
 insertUser a = do
   ls <- getSegment (Proxy :: Proxy "Users")
   let newLs = IxSet.insert a ls
@@ -93,10 +93,10 @@ instance Eventable "insertUser" where
 
 
 
-fetchUsers :: (AcidWorldState i ss, HasSegment ss  "Users") => AWQuery i ss [User]
+fetchUsers :: (ValidAcidWorldState i ss, HasSegment ss  "Users") => AWQuery i ss [User]
 fetchUsers = fmap IxSet.toList $ askSegment (Proxy :: Proxy "Users")
 
-fetchUsersStats :: (AcidWorldState i ss, HasSegment ss  "Users") => AWQuery i ss Int
+fetchUsersStats :: (ValidAcidWorldState i ss, HasSegment ss  "Users") => AWQuery i ss Int
 fetchUsersStats = fmap IxSet.size $ askSegment (Proxy :: Proxy "Users")
 
 
@@ -131,7 +131,7 @@ openAppAcidWorldRestoreState opts s = do
   t <- mkTempDir
   let e = topLevelStoredStateDir <> "/" <> "testState" <> "/" <> s
   copyDirectory e t
-  aw <- throwEither $ openAcidWorld Nothing (AWBConfigFS t) AWConfigStatePure opts
+  aw <- throwEither $ openAcidWorld Nothing (AWBConfigFS t) AWConfigPureState opts
   -- this is to force the internal state
   i <- query aw fetchUsersStats
   putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
@@ -141,7 +141,7 @@ openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AcidWorldBackend b, 
 openAppAcidWorldFresh bConfIO opts = do
   bConf <- bConfIO
 
-  throwEither $ openAcidWorld Nothing bConf AWConfigStatePure opts
+  throwEither $ openAcidWorld Nothing bConf AWConfigPureState opts
 
 
 openAppAcidWorldFreshFS :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => (AcidSerialiseEventOptions s) -> IO (AppAW s)

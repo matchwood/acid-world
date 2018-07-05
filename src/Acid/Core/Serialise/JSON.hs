@@ -33,7 +33,6 @@ instance AcidSerialiseEvent AcidSerialiserJSON where
   data AcidSerialiseEventOptions AcidSerialiserJSON = AcidSerialiserJSONOptions
   type AcidSerialiseT AcidSerialiserJSON = BL.ByteString
   type AcidSerialiseParser AcidSerialiserJSON ss nn = (Object -> Either Text (WrappedEvent ss nn))
-  serialiserName _ = "JSON"
   serialiseEvent _ se = (Aeson.encode se) <> "\n"
   deserialiseEvent _ t = left (T.pack) $ (Aeson.eitherDecode' t)
   makeDeserialiseParsers _ _ _ = makeJSONParsers
