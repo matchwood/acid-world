@@ -44,7 +44,8 @@ library
     serialise,
     cborg,
     safecopy,
-    cereal
+    cereal,
+    filelock
 
 
   hs-source-dirs:      src

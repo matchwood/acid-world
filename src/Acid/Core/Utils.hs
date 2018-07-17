@@ -13,6 +13,9 @@ import qualified  Data.Vinyl.Curry as V
 import Generics.SOP.NP
 import Generics.SOP
 
+showT :: (Show a) => a -> T.Text
+showT = utf8BuilderToText . displayShow
+
 showSymbol :: (KnownSymbol a) => proxy a -> T.Text
 showSymbol p = T.pack $ symbolVal p
 
