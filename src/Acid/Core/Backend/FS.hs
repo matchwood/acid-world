@@ -3,15 +3,12 @@
 
 module Acid.Core.Backend.FS where
 import RIO
-import System.IO (openFile, IOMode(..))
+import System.IO (openBinaryFile, IOMode(..))
 import qualified RIO.Directory as Dir
-import qualified  RIO.ByteString.Lazy as BL
 import qualified  RIO.ByteString as BS
 import qualified Control.Concurrent.STM.TMVar as  TMVar
 import qualified Control.Concurrent.STM  as STM
-import qualified System.FileLock as FileLock
 
-import Acid.Core.Utils
 import Acid.Core.State
 import Acid.Core.Backend.Abstract
 import Conduit
@@ -20,11 +17,11 @@ data AcidWorldBackendFS
 
 
 -- @todo add exception handling?
-withTMVar :: TMVar a -> (a -> IO b) -> IO b
+withTMVar :: (MonadIO m) => TMVar a -> (a -> m b) -> m b
 withTMVar m io = do
-  a <- atomically $ TMVar.takeTMVar m
+  a <- liftIO $ atomically $ TMVar.takeTMVar m
   b <- io a
-  atomically $ TMVar.putTMVar m a
+  liftIO $ atomically $ TMVar.putTMVar m a
   pure b
 
 
@@ -41,11 +38,12 @@ instance AcidWorldBackend AcidWorldBackendFS where
     stateP <- Dir.makeAbsolute (aWBConfigFSStateDir c)
     Dir.createDirectoryIfMissing True stateP
     let eventPath = makeEventPath stateP
-    traceM $ "Opening file"
-    hdl <- liftIO $ openFile eventPath ReadWriteMode
-    traceM $ "Opened file!"
+    hdl <- liftIO $ openBinaryFile eventPath ReadWriteMode
     hdlV <- liftIO $ STM.atomically $ newTMVar hdl
     pure . pure $ AWBStateFS c{aWBConfigFSStateDir = stateP} hdlV
+  closeBackend s = do
+    hdl <- atomically $ TMVar.takeTMVar (aWBStateFSEventsHandle s)
+    liftIO $ hClose hdl
   loadEvents deserialiseConduit s =
     liftIO $ withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
       pure $
@@ -54,10 +52,10 @@ instance AcidWorldBackend AcidWorldBackendFS where
 
 
   -- this should be bracketed and so forth @todo
-  handleUpdateEvent serializer awb awu (e :: Event n) = do
-    let eventPath = makeEventPath (aWBConfigFSStateDir . aWBStateFSConfig $ awb)
+  handleUpdateEvent serializer s awu (e :: Event n) = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
     stE <- mkStorableEvent e
-    --BL.appendFile eventPath (BL.fromStrict $ serializer stE)
+    BS.hPut hdl $ serializer stE
+    hFlush hdl
     runUpdate awu e
 
 
