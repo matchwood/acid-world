@@ -21,6 +21,9 @@ type family ToSegmentFields (segmentNames :: [Symbol]) = (segmentFields :: [(Sym
   ToSegmentFields '[] = '[]
   ToSegmentFields (s ': ss) = '(s, SegmentS s) ': ToSegmentFields ss
 
+type family ToSegmentTypes (segmentNames :: [Symbol]) :: [*] where
+  ToSegmentTypes '[] = '[]
+  ToSegmentTypes (s ': ss) = (SegmentS s) ': ToSegmentTypes ss
 
 newtype SegmentsState segmentNames = SegmentsState {segmentsStateFieldRec :: V.AFieldRec (ToSegmentFields segmentNames)}
 

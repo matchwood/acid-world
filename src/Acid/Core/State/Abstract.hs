@@ -10,6 +10,7 @@ import qualified  RIO.Time as Time
 
 import Generics.SOP
 import Generics.SOP.NP
+import Generics.SOP.Dict
 import GHC.TypeLits
 
 
@@ -32,19 +33,36 @@ class AcidWorldState (i :: *) where
   data AWConfig i (ss :: [Symbol])
   data AWUpdate i (ss :: [Symbol]) a
   data AWQuery i (ss :: [Symbol]) a
-  initialiseState :: (MonadIO z, MonadThrow z) => AWConfig i ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState i ss))
+  initialiseState :: (MonadIO z, MonadThrow z, ValidAcidWorldState i ss) => AWConfig i ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState i ss))
   closeState :: (MonadIO z) => AWState i ss -> z ()
   closeState _ = pure ()
   getSegment :: (HasSegment ss s) =>  Proxy s -> AWUpdate i ss (SegmentS s)
   putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> AWUpdate i ss ()
   askSegment :: (HasSegment ss s) =>  Proxy s -> AWQuery i ss (SegmentS s)
-  runUpdate :: ( ValidEventName ss n , MonadIO m) => AWState i ss -> Event n -> m (EventResult n)
+  runUpdate :: (ValidAcidWorldState i ss, ValidEventName ss n , MonadIO m) => AWState i ss -> Event n -> m (EventResult n)
   runQuery :: (MonadIO m) => AWState i ss -> AWQuery i ss a -> m a
   liftQuery :: AWQuery i ss a -> AWUpdate i ss a
 
 
-class (AcidWorldState i, Monad (AWUpdate i ss), Monad (AWQuery i ss)) => ValidAcidWorldState i ss
-instance (AcidWorldState i, Monad (AWUpdate i ss), Monad (AWQuery i ss)) => ValidAcidWorldState i ss
+class (SegmentS n ~ s) => SegmentNameToState n s
+instance (SegmentS n ~ s) => SegmentNameToState n s
+
+
+class (AcidWorldState i, AllZip SegmentNameToState ss (ToSegmentTypes ss),  All (HasSegment ss) ss, Monad (AWUpdate i ss), Monad (AWQuery i ss)) => ValidAcidWorldState i ss
+instance (AcidWorldState i,  AllZip SegmentNameToState ss (ToSegmentTypes ss), All (HasSegment ss) ss, Monad (AWUpdate i ss), Monad (AWQuery i ss)) => ValidAcidWorldState i ss
+
+askState :: forall i ss. (ValidAcidWorldState i ss) => AWQuery i ss (NP I (ToSegmentTypes ss))
+askState = sequence_NP segSNp
+
+  where
+    segSNp :: NP (AWQuery i ss) (ToSegmentTypes ss)
+    segSNp = trans_NP (Proxy :: Proxy SegmentNameToState) askSegmentFromDict dictNp
+    askSegmentFromDict :: forall s. Dict (HasSegment ss) s -> AWQuery i ss (SegmentS s)
+    askSegmentFromDict Dict = askSegment (Proxy :: Proxy s)
+    dictNp :: NP (Dict (HasSegment ss)) ss
+    dictNp = cpure_NP (Proxy :: Proxy (HasSegment ss)) Dict
+
+
 
 data BackendHandles m ss nn = BackendHandles {
     bhLoadEvents :: forall i. MonadIO m => m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),

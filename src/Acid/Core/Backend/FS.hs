@@ -48,9 +48,18 @@ instance AcidWorldBackend AcidWorldBackendFS where
     hdl <- liftIO $ openBinaryFile eventPath ReadWriteMode
     hdlV <- liftIO $ STM.atomically $ newTMVar hdl
     pure . pure $ AWBStateFS c{aWBConfigFSStateDir = stateP} hdlV
+
   createCheckpoint _ s awu = do
-    withTMVar (aWBStateFSEventsHandle s) $ \_hdl -> do
-      pure ()
+    sToWrite <- modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
+      let eventPath = makeEventPath (aWBConfigFSStateDir . aWBStateFSConfig $ s)
+          nextEventFile = eventPath <> "1"
+      liftIO $ hClose hdl
+      Dir.renameFile eventPath nextEventFile
+      hdl <- liftIO $ openBinaryFile eventPath ReadWriteMode
+      st <- runQuery awu askState
+      pure (hdl, st)
+    undefined
+
 
   closeBackend s = modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
     liftIO $ hClose hdl

@@ -32,6 +32,7 @@ instance AcidWorldState AcidStatePureState where
 
   putSegment ps seg = AWUpdatePureState $ St.modify' (putSegmentP ps seg)
   askSegment ps = AWQueryPureState $ getSegmentP ps `fmap` Re.ask
+  initialiseState :: forall z ss nn . (MonadIO z, MonadThrow z, ValidAcidWorldState AcidStatePureState ss) => AWConfig AcidStatePureState ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState AcidStatePureState ss))
   initialiseState _ (BackendHandles{..}) defState = do
     mCpState <- bhGetLastCheckpointState
 
@@ -58,7 +59,7 @@ instance AcidWorldState AcidStatePureState where
       applyToState s e =
         let (AWUpdatePureState stm) = runWrappedEvent e
         in snd $ St.runState stm s
-  runUpdate :: forall ss n m. ( ValidEventName ss n , MonadIO m) => AWState AcidStatePureState ss -> Event n -> m (EventResult n)
+  runUpdate :: forall ss n m. (ValidAcidWorldState AcidStatePureState ss, ValidEventName ss n , MonadIO m) => AWState AcidStatePureState ss -> Event n -> m (EventResult n)
   runUpdate awState (Event xs :: Event n) = liftIO $ STM.atomically $ do
     let (AWUpdatePureState stm :: ((AWUpdate AcidStatePureState)   ss (EventResult n))) = runEvent (Proxy :: Proxy n) xs
     s <- STM.readTVar (aWStatePureStateState awState)

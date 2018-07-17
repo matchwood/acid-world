@@ -24,7 +24,7 @@ class AcidWorldBackend (b :: k) where
   closeBackend _ = pure ()
 
 
-  createCheckpoint :: MonadIO m => Proxy ss -> AWBState b -> AWState u ss -> m ()
+  createCheckpoint :: (MonadIO m, ValidAcidWorldState u ss) => Proxy ss -> AWBState b -> AWState u ss -> m ()
   createCheckpoint _ _ _ = pure ()
 
   -- should return the most recent checkpoint state, if any
