@@ -6,8 +6,8 @@ import RIO
 import qualified  RIO.Text as T
 import GHC.TypeLits
 import GHC.Exts
-import qualified  Data.Vinyl as V
-import qualified  Data.Vinyl.Functor as V
+{-import qualified  Data.Vinyl as V
+import qualified  Data.Vinyl.Functor as V-}
 import qualified  Data.Vinyl.Curry as V
 
 import Generics.SOP.NP
@@ -43,7 +43,7 @@ type family IfOrErrC (a :: Bool) (err :: ErrorMessage) :: Constraint where
 class (Elem a b ~ 'True) => IsElem (a :: k) (b :: [k])
 instance  (Elem a b ~ 'True) => IsElem a b
 
-
+{-
 npToVinylRec :: (forall a. f a -> g a) -> NP f xs -> V.Rec g xs
 npToVinylRec _ Nil = V.RNil
 npToVinylRec f ((:*) a restNp) = f a V.:& (npToVinylRec f restNp)
@@ -57,7 +57,7 @@ npIToVinylHList :: NP I xs -> V.HList xs
 npIToVinylHList np = npToVinylRec (V.Identity . unI) np
 
 vinylHListToNpI :: V.HList xs -> NP I xs
-vinylHListToNpI hl = vinylRecToNp (I . V.getIdentity) hl
+vinylHListToNpI hl = vinylRecToNp (I . V.getIdentity) hl-}
 
 -- steal these from vinyl
 type NPCurried ts a = V.Curried ts a

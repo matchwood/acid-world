@@ -22,15 +22,15 @@ type family ToSegmentFields (segmentNames :: [Symbol]) = (segmentFields :: [(Sym
   ToSegmentFields (s ': ss) = '(s, SegmentS s) ': ToSegmentFields ss
 
 
-newtype SegmentsState segmentNames = SegmentsState {segmentsStateFieldRec :: V.FieldRec (ToSegmentFields segmentNames)}
+newtype SegmentsState segmentNames = SegmentsState {segmentsStateFieldRec :: V.AFieldRec (ToSegmentFields segmentNames)}
 
 
 class (V.KnownField a, Segment (V.Fst a), SegmentS (V.Fst a) ~ (V.Snd a)) => KnownSegmentField a
 instance (V.KnownField a, Segment (V.Fst a), SegmentS (V.Fst a) ~ (V.Snd a)) => KnownSegmentField a
 
 
-class (V.HasField V.Rec s (ToSegmentFields segmentNames) (SegmentS s), KnownSymbol s) => HasSegment segmentNames s
-instance (V.HasField V.Rec s (ToSegmentFields segmentNames) (SegmentS s), KnownSymbol s) => HasSegment segmentNames s
+class (V.HasField V.ARec s (ToSegmentFields segmentNames) (SegmentS s), KnownSymbol s) => HasSegment segmentNames s
+instance (V.HasField V.ARec s (ToSegmentFields segmentNames) (SegmentS s), KnownSymbol s) => HasSegment segmentNames s
 
 type family HasSegments (allSegmentNames :: [Symbol]) (segmentNames :: [Symbol]) :: Constraint where
   HasSegments allSegmentNames segmentNames = V.AllConstrained (HasSegment allSegmentNames) segmentNames
@@ -38,7 +38,9 @@ type family HasSegments (allSegmentNames :: [Symbol]) (segmentNames :: [Symbol])
 
 type ValidSegmentNames segmentNames =
   ( V.AllFields (ToSegmentFields segmentNames)
-  , V.AllConstrained KnownSegmentField (ToSegmentFields segmentNames))
+  , V.AllConstrained KnownSegmentField (ToSegmentFields segmentNames)
+  , V.NatToInt (V.RLength (ToSegmentFields segmentNames))
+  )
 
 
 makeDefaultSegment :: forall a. KnownSegmentField a => V.ElField '(V.Fst a, (V.Snd a))
@@ -46,7 +48,7 @@ makeDefaultSegment = (V.Label :: V.Label (V.Fst a)) V.=: (defaultState (Proxy ::
 
 
 defaultSegmentsState :: forall segmentNames. (ValidSegmentNames segmentNames) => Proxy segmentNames -> SegmentsState segmentNames
-defaultSegmentsState _ =  SegmentsState $ V.rpureConstrained (Proxy :: Proxy KnownSegmentField) makeDefaultSegment
+defaultSegmentsState _ =  SegmentsState $ V.toARec $ V.rpureConstrained (Proxy :: Proxy KnownSegmentField) makeDefaultSegment
 
 putSegmentP :: forall s ss. (HasSegment ss s) => Proxy s -> SegmentS s -> SegmentsState ss -> SegmentsState ss
 putSegmentP _ seg (SegmentsState fr) = SegmentsState $ V.rputf (V.Label :: V.Label s) seg fr
