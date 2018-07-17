@@ -23,6 +23,10 @@ class AcidWorldBackend (b :: k) where
   closeBackend :: (MonadIO m) => AWBState b -> m ()
   closeBackend _ = pure ()
 
+
+  createCheckpoint :: MonadIO m => Proxy ss -> AWBState b -> AWState u ss -> m ()
+  createCheckpoint _ _ _ = pure ()
+
   -- should return the most recent checkpoint state, if any
   getLastCheckpointState :: (MonadIO m) => Proxy ss -> AWBState b -> m (Either Text (Maybe (SegmentsState ss)))
   getLastCheckpointState _ _ = pure . pure $ Nothing

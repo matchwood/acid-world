@@ -59,13 +59,12 @@ instance AcidWorldState AcidStatePureState where
         let (AWUpdatePureState stm) = runWrappedEvent e
         in snd $ St.runState stm s
   runUpdate :: forall ss n m. ( ValidEventName ss n , MonadIO m) => AWState AcidStatePureState ss -> Event n -> m (EventResult n)
-  runUpdate awState (Event xs :: Event n) = do
+  runUpdate awState (Event xs :: Event n) = liftIO $ STM.atomically $ do
     let (AWUpdatePureState stm :: ((AWUpdate AcidStatePureState)   ss (EventResult n))) = runEvent (Proxy :: Proxy n) xs
-    liftIO $ STM.atomically $ do
-      s <- STM.readTVar (aWStatePureStateState awState)
-      (!a, !s') <- pure $ St.runState stm s
-      STM.writeTVar (aWStatePureStateState awState) s'
-      return a
+    s <- STM.readTVar (aWStatePureStateState awState)
+    (!a, !s') <- pure $ St.runState stm s
+    STM.writeTVar (aWStatePureStateState awState) s'
+    return a
 
   runQuery awState (AWQueryPureState q) = do
     liftIO $ STM.atomically $ do

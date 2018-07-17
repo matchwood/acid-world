@@ -4,6 +4,7 @@ import Shared.App
 
 import RIO
 import qualified RIO.Text as T
+import qualified RIO.List as L
 
 import Data.Proxy(Proxy(..))
 import Acid.World
@@ -102,7 +103,8 @@ unit_insertAndFetchState b o step = do
 
 unit_insertAndRestoreState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => IO (AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
 unit_insertAndRestoreState b o step = do
-  us <- QC.generate $ generateUsers 1000
+  allUs <- QC.generate $ generateUsers 2000
+  let (us, us2) = L.splitAt 1000 allUs
   step "Opening acid world"
   aw <- openAppAcidWorldFresh b o
   step "Inserting users"
@@ -111,6 +113,14 @@ unit_insertAndRestoreState b o step = do
   closeAcidWorld aw
   step "Reopening acid world"
   aw2 <- reopenAcidWorldMiddleware (pure aw)
+  step "Inserting second set of users"
+  mapM_ (runInsertUser aw2) us2
+  step "Closing acid world"
+  closeAcidWorld aw2
+  step "Reopening acid world"
+  aw3 <- reopenAcidWorldMiddleware (pure aw2)
   step "Fetching users"
-  us2 <- query aw2 fetchUsers
-  assertBool "Fetched user list did not match inserted users" (us == us2)
+  us3 <- query aw3 fetchUsers
+  step $ "Fetched users: " ++ (show . length $ us3)
+
+  assertBool "Fetched user list did not match inserted users" (L.sort (us ++ us2) == L.sort us3)

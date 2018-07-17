@@ -24,6 +24,13 @@ withTMVar m io = do
   liftIO $ atomically $ TMVar.putTMVar m a
   pure b
 
+modifyTMVar :: (MonadIO m) => TMVar a -> (a -> m (a, b)) -> m b
+modifyTMVar m io = do
+  a <- liftIO $ atomically $ TMVar.takeTMVar m
+  (a', b) <- io a
+  liftIO $ atomically $ TMVar.putTMVar m a'
+  pure b
+
 
 instance AcidWorldBackend AcidWorldBackendFS where
   data AWBState AcidWorldBackendFS = AWBStateFS {
@@ -41,12 +48,15 @@ instance AcidWorldBackend AcidWorldBackendFS where
     hdl <- liftIO $ openBinaryFile eventPath ReadWriteMode
     hdlV <- liftIO $ STM.atomically $ newTMVar hdl
     pure . pure $ AWBStateFS c{aWBConfigFSStateDir = stateP} hdlV
-  closeBackend s = do
-    hdl <- atomically $ TMVar.takeTMVar (aWBStateFSEventsHandle s)
+  createCheckpoint _ s awu = do
+    withTMVar (aWBStateFSEventsHandle s) $ \_hdl -> do
+      pure ()
+
+  closeBackend s = modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
     liftIO $ hClose hdl
-    atomically $ TMVar.putTMVar (aWBStateFSEventsHandle s) (error "AcidWorldBackendFS has been closed")
-  loadEvents deserialiseConduit s =
-    liftIO $ withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
+    pure (error "AcidWorldBackendFS has been closed", ())
+
+  loadEvents deserialiseConduit s = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
       pure $
            sourceHandle hdl .|
            deserialiseConduit
@@ -54,11 +64,11 @@ instance AcidWorldBackend AcidWorldBackendFS where
 
   -- this should be bracketed and the runUpdate should return the initial state, so we can rollback if necessary @todo
   handleUpdateEvent serializer s awu (e :: Event n) = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
-
     stE <- mkStorableEvent e
     BS.hPut hdl $ serializer stE
     hFlush hdl
     runUpdate awu e
+
 
 
 makeEventPath :: FilePath -> FilePath
