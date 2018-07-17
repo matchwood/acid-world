@@ -6,8 +6,6 @@ import Generics.SOP
 import qualified Control.Monad.State.Strict as St
 import qualified Control.Monad.Reader as Re
 
-import qualified  Data.Vinyl as V
-
 import qualified Control.Concurrent.STM.TVar as  TVar
 import qualified Control.Concurrent.STM  as STM
 
@@ -30,15 +28,10 @@ instance AcidWorldState AcidStatePureState where
     deriving (Functor, Applicative, Monad)
   newtype AWQuery AcidStatePureState ss a = AWQueryPureState (Re.Reader (SegmentsState ss) a)
     deriving (Functor, Applicative, Monad)
-  getSegment (Proxy :: Proxy s) = do
-    r <- AWUpdatePureState St.get
-    pure $ V.getField $ V.rgetf (V.Label :: V.Label s) r
-  putSegment (Proxy :: Proxy s) seg = do
-    r <- AWUpdatePureState St.get
-    AWUpdatePureState (St.put $ V.rputf (V.Label :: V.Label s) seg r)
-  askSegment (Proxy :: Proxy s) = do
-    r <- AWQueryPureState Re.ask
-    pure $ V.getField $ V.rgetf (V.Label :: V.Label s) r
+  getSegment ps = AWUpdatePureState $ getSegmentP ps `fmap` St.get
+
+  putSegment ps seg = AWUpdatePureState $ St.modify' (putSegmentP ps seg)
+  askSegment ps = AWQueryPureState $ getSegmentP ps `fmap` Re.ask
   initialiseState _ (BackendHandles{..}) defState = do
     mCpState <- bhGetLastCheckpointState
 

@@ -44,6 +44,7 @@ instance AcidWorldBackend AcidWorldBackendFS where
   closeBackend s = do
     hdl <- atomically $ TMVar.takeTMVar (aWBStateFSEventsHandle s)
     liftIO $ hClose hdl
+    atomically $ TMVar.putTMVar (aWBStateFSEventsHandle s) (error "AcidWorldBackendFS has been closed")
   loadEvents deserialiseConduit s =
     liftIO $ withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
       pure $
@@ -51,8 +52,9 @@ instance AcidWorldBackend AcidWorldBackendFS where
            deserialiseConduit
 
 
-  -- this should be bracketed and so forth @todo
+  -- this should be bracketed and the runUpdate should return the initial state, so we can rollback if necessary @todo
   handleUpdateEvent serializer s awu (e :: Event n) = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
+
     stE <- mkStorableEvent e
     BS.hPut hdl $ serializer stE
     hFlush hdl

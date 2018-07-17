@@ -2,7 +2,7 @@
 
 module Acid.Core.Segment where
 
-
+import RIO
 import Generics.SOP
 import GHC.TypeLits
 import GHC.Exts (Constraint)
@@ -22,7 +22,7 @@ type family ToSegmentFields (segmentNames :: [Symbol]) = (segmentFields :: [(Sym
   ToSegmentFields (s ': ss) = '(s, SegmentS s) ': ToSegmentFields ss
 
 
-type SegmentsState segmentNames = V.FieldRec (ToSegmentFields segmentNames)
+newtype SegmentsState segmentNames = SegmentsState {segmentsStateFieldRec :: V.FieldRec (ToSegmentFields segmentNames)}
 
 
 class (V.KnownField a, Segment (V.Fst a), SegmentS (V.Fst a) ~ (V.Snd a)) => KnownSegmentField a
@@ -46,8 +46,10 @@ makeDefaultSegment = (V.Label :: V.Label (V.Fst a)) V.=: (defaultState (Proxy ::
 
 
 defaultSegmentsState :: forall segmentNames. (ValidSegmentNames segmentNames) => Proxy segmentNames -> SegmentsState segmentNames
-defaultSegmentsState _ =  (V.rpureConstrained (Proxy :: Proxy KnownSegmentField) makeDefaultSegment :: SegmentsState segmentNames)
+defaultSegmentsState _ =  SegmentsState $ V.rpureConstrained (Proxy :: Proxy KnownSegmentField) makeDefaultSegment
 
+putSegmentP :: forall s ss. (HasSegment ss s) => Proxy s -> SegmentS s -> SegmentsState ss -> SegmentsState ss
+putSegmentP _ seg (SegmentsState fr) = SegmentsState $ V.rputf (V.Label :: V.Label s) seg fr
 
-putSegmentP :: forall s ss. (HasSegment ss s) => Proxy s -> Proxy ss -> SegmentS s -> SegmentsState ss -> SegmentsState ss
-putSegmentP _ _ seg st = V.rputf (V.Label :: V.Label s) seg st
+getSegmentP :: forall s ss. (HasSegment ss s) => Proxy s ->  SegmentsState ss -> SegmentS s
+getSegmentP _ (SegmentsState fr) = V.getField $ V.rgetf (V.Label :: V.Label s) fr
