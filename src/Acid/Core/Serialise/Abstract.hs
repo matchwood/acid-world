@@ -43,7 +43,7 @@ class AcidSerialiseEvent (t :: k) where
 
 class AcidSerialiseSegment (t :: k) seg where
   serialiseSegment :: AcidSerialiseEventOptions t -> seg -> AcidSerialiseT t
-
+  deserialiseSegment :: AcidSerialiseEventOptions t -> AcidSerialiseT t -> Either Text seg
 
 
 class AcidSerialiseC t where

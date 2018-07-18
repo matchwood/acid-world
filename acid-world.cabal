@@ -105,6 +105,7 @@ test-suite acid-world-test
   main-is:             Test.hs
   other-modules:       Shared.TH
                        Shared.App
+                       Shared.Schema
   ghc-options:         -Wall
                        -Wcompat
                        -Wincomplete-record-updates
@@ -185,6 +186,7 @@ benchmark acid-world-benchmark
   main-is:             Benchmark.hs
   other-modules:       Shared.TH
                        Shared.App
+                       Shared.Schema
   ghc-options:         -Wall
                        -Wcompat
                        -Wincomplete-record-updates

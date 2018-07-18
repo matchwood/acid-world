@@ -1,4 +1,5 @@
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE UndecidableSuperClasses #-}
 
 module Acid.Core.Segment where
 
@@ -43,6 +44,15 @@ type family HasSegments (allSegmentNames :: [Symbol]) (segmentNames :: [Symbol])
   HasSegments allSegmentNames segmentNames = V.AllConstrained (HasSegment allSegmentNames) segmentNames
 
 
+class (SegmentS n ~ s) => SegmentNameToState n s
+instance (SegmentS n ~ s) => SegmentNameToState n s
+
+
+class (KnownSegmentField sField, HasSegment ss (V.Fst sField)) => SegmentFetching ss sField
+instance (KnownSegmentField sField, HasSegment ss (V.Fst sField)) => SegmentFetching ss sField
+
+class (a ~ b, KnownSegmentField a, SegmentFetching ss a) => SegmentFieldToSegmentField ss a b
+instance (a ~ b, KnownSegmentField a, SegmentFetching ss a) => SegmentFieldToSegmentField ss a b
 
 type ValidSegmentNames segmentNames =
   ( V.AllFields (ToSegmentFields segmentNames)
@@ -50,6 +60,19 @@ type ValidSegmentNames segmentNames =
   , V.NatToInt (V.RLength (ToSegmentFields segmentNames))
   , UniqueElementsWithErr segmentNames ~ 'True
   )
+
+class ( AllZip SegmentNameToState ss (ToSegmentTypes ss)
+      , AllZip (SegmentFieldToSegmentField ss) (ToSegmentFields ss) (ToSegmentFields ss)
+      , All (HasSegment ss) ss
+      , ValidSegmentNames ss)
+      => ValidSegments ss
+
+
+instance ( AllZip SegmentNameToState ss (ToSegmentTypes ss)
+      , AllZip (SegmentFieldToSegmentField ss) (ToSegmentFields ss) (ToSegmentFields ss)
+      , All (HasSegment ss) ss
+      , ValidSegmentNames ss)
+      => ValidSegments ss
 
 npToSegmentsState :: forall ss. (ValidSegmentNames ss) => NP V.ElField (ToSegmentFields ss) -> SegmentsState ss
 npToSegmentsState np = SegmentsState $ npToARec (Proxy :: Proxy ss) np

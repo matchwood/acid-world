@@ -20,6 +20,7 @@ import qualified  Data.Vinyl.TypeLevel as V
 
 import Acid.Core.State
 import Acid.Core.Utils
+import Acid.Core.Segment
 import Acid.Core.Backend.Abstract
 import Acid.Core.Serialise.Abstract
 import Conduit
@@ -71,6 +72,14 @@ instance AcidWorldBackend AcidWorldBackendFS where
     writeCheckpoint s t sToWrite
 
 
+  getLastCheckpointState ps s t = do
+    let cpFolder = (aWBConfigFSStateDir . aWBStateFSConfig $ s) <> "/checkpoint"
+    doesExist <- Dir.doesDirectoryExist cpFolder
+    if doesExist
+      then do
+        readLastCheckpointState cpFolder ps s t
+      else pure . pure $ Nothing
+
   closeBackend s = modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
     liftIO $ hClose hdl
     pure (error "AcidWorldBackendFS has been closed", ())
@@ -89,16 +98,36 @@ instance AcidWorldBackend AcidWorldBackendFS where
     runUpdate awu e
 
 
-writeCheckpoint :: forall t sFields m. (AcidSerialiseT t ~ BS.ByteString, MonadIO m,  All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()
+writeCheckpoint :: forall t sFields m. (AcidSerialiseT t ~ BS.ByteString, MonadUnliftIO m, All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()
 writeCheckpoint s t np = do
   let cpFolder = (aWBConfigFSStateDir . aWBStateFSConfig $ s) <> "/checkpoint"
   Dir.createDirectoryIfMissing True cpFolder
-  ctraverse__NP (Proxy :: Proxy (AcidSerialiseSegmentFieldConstraint t)) (writeSegment t cpFolder) np
-
+  let acts =  cfoldMap_NP (Proxy :: Proxy (AcidSerialiseSegmentFieldConstraint t)) ((:[]) . writeSegment t cpFolder) np
+  mapConcurrently_ id acts
 
 writeSegment :: forall t m fs. (AcidSerialiseT t ~ BS.ByteString, MonadIO m, AcidSerialiseSegmentFieldConstraint t fs) => AcidSerialiseEventOptions t -> FilePath -> V.ElField fs -> m ()
 writeSegment t cpFolder ((V.Field seg)) = do
   BS.writeFile (cpFolder <> "/" <> T.unpack (toUniqueText (Proxy :: Proxy (V.Fst fs)))) (serialiseSegment t seg)
+
+readLastCheckpointState :: forall ss m t. (ValidSegments ss,  MonadIO m, AcidSerialiseT t ~ BS.ByteString, All (AcidSerialiseSegmentFieldConstraint t) (ToSegmentFields ss)) => FilePath -> Proxy ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either Text (Maybe (SegmentsState ss)))
+readLastCheckpointState sPath _ _ t = (fmap . fmap) (Just . npToSegmentsState) segsNpE
+
+  where
+    segsNpE :: m (Either Text (NP V.ElField (ToSegmentFields ss)))
+    segsNpE = unComp $ sequence'_NP segsNp
+    segsNp :: NP ((m :.: Either Text) :.: V.ElField) (ToSegmentFields ss)
+    segsNp = trans_NP (Proxy :: Proxy (SegmentFieldToSegmentField ss)) readSegmentFromProxy proxyNp
+    readSegmentFromProxy :: forall sField. (SegmentFetching ss sField) => Proxy sField -> ((m :.: Either Text) :.: V.ElField) sField
+    readSegmentFromProxy _ =  Comp $  fmap V.Field $  Comp $ readSegment (Proxy :: Proxy (V.Fst sField))
+    readSegment :: (SegmentFetching ss sName) => Proxy sField -> m (Either Text (SegmentS sName))
+    readSegment ps = do
+      let fPath = sPath <> "/" <> T.unpack (toUniqueText ps)
+      bs <- BS.readFile fPath
+      pure $ deserialiseSegment t bs
+
+    proxyNp :: NP Proxy (ToSegmentFields ss)
+    proxyNp = pure_NP Proxy
+
 
 makeEventPath :: FilePath -> FilePath
 makeEventPath fp = fp <> "/" <> "events"

@@ -25,12 +25,12 @@ class AcidWorldBackend (b :: k) where
   closeBackend _ = pure ()
 
 
-  createCheckpointBackend :: (AcidSerialiseT t ~ AWBSerialiseT b, MonadIO m, ValidAcidWorldState u ss, All (AcidSerialiseSegmentFieldConstraint t) (ToSegmentFields ss)) =>  AWBState b -> AWState u ss -> AcidSerialiseEventOptions t -> m ()
+  createCheckpointBackend :: (AcidSerialiseT t ~ AWBSerialiseT b, MonadUnliftIO m, ValidAcidWorldState u ss, All (AcidSerialiseSegmentFieldConstraint t) (ToSegmentFields ss)) =>  AWBState b -> AWState u ss -> AcidSerialiseEventOptions t -> m ()
   createCheckpointBackend _ _ _ = pure ()
 
   -- should return the most recent checkpoint state, if any
-  getLastCheckpointState :: (MonadIO m) => Proxy ss -> AWBState b -> m (Either Text (Maybe (SegmentsState ss)))
-  getLastCheckpointState _ _ = pure . pure $ Nothing
+  getLastCheckpointState :: (MonadIO m, ValidSegments ss, AcidSerialiseT t ~ AWBSerialiseT b, All (AcidSerialiseSegmentFieldConstraint t) (ToSegmentFields ss)) => Proxy ss -> AWBState b -> AcidSerialiseEventOptions t -> m (Either Text (Maybe (SegmentsState ss)))
+  getLastCheckpointState _ _ _ = pure . pure $ Nothing
   -- return events since the last checkpoint, if any
   loadEvents :: (MonadIO m) => (ConduitT (AWBSerialiseT b) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->  AWBState b -> m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
   loadEvents _ _ = pure $ yieldMany []

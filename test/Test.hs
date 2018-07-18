@@ -128,11 +128,17 @@ unit_insertAndRestoreState b o step = do
 
 unit_checkpointAndRestoreState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => IO (AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
 unit_checkpointAndRestoreState b o step = do
-  us <- QC.generate $ generateUsers 1000
+  us <- QC.generate $ generateUsers 100000
+  as <- QC.generate $ generateAddresses 100000
+  ps <- QC.generate $ generatePhonenumbers 100000
   step "Opening acid world"
   aw <- openAppAcidWorldFresh b o
   step "Inserting users"
   mapM_ (runInsertUser aw) us
+  step "Inserting addresses"
+  mapM_ (runInsertAddress aw) as
+  step "Inserting phonenumbers"
+  mapM_ (runInsertPhonenumber aw) ps
   step "Creating checkpoint"
   createCheckpoint aw
   step "Closing acid world"

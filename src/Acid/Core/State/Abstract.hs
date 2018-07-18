@@ -46,30 +46,13 @@ class AcidWorldState (i :: *) where
   liftQuery :: AWQuery i ss a -> AWUpdate i ss a
 
 
-class (SegmentS n ~ s) => SegmentNameToState n s
-instance (SegmentS n ~ s) => SegmentNameToState n s
 
 
 
 
-class (KnownSegmentField sField, HasSegment ss (V.Fst sField)) => SegmentFetching ss sField
-instance (KnownSegmentField sField, HasSegment ss (V.Fst sField)) => SegmentFetching ss sField
-
-class (a ~ b, KnownSegmentField a, SegmentFetching ss a) => SegmentFieldToSegmentField ss a b
-instance (a ~ b, KnownSegmentField a, SegmentFetching ss a) => SegmentFieldToSegmentField ss a b
-
-class ( AllZip SegmentNameToState ss (ToSegmentTypes ss)
-      , AllZip (SegmentFieldToSegmentField ss) (ToSegmentFields ss) (ToSegmentFields ss)
-      , All (HasSegment ss) ss
-      , ValidSegmentNames ss)
-      => ValidSegments ss
 
 
-instance ( AllZip SegmentNameToState ss (ToSegmentTypes ss)
-      , AllZip (SegmentFieldToSegmentField ss) (ToSegmentFields ss) (ToSegmentFields ss)
-      , All (HasSegment ss) ss
-      , ValidSegmentNames ss)
-      => ValidSegments ss
+
 
 class ( AcidWorldState i
       , Monad (AWUpdate i ss)

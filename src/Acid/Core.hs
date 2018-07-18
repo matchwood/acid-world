@@ -75,7 +75,7 @@ query ::forall ss nn t m a. MonadIO m => AcidWorld ss nn t -> (forall i. ValidAc
 query (AcidWorld {..}) q = runQuery acidWorldState q
 
 
-createCheckpoint ::forall ss nn t m. MonadIO m => AcidWorld ss nn t -> m ()
+createCheckpoint ::forall ss nn t m. (MonadUnliftIO m) => AcidWorld ss nn t -> m ()
 createCheckpoint (AcidWorld {..}) = createCheckpointBackend acidWorldBackendState acidWorldState acidWorldSerialiserOptions
 {-
 AcidWorldBackend
