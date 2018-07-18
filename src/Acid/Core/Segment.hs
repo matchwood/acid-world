@@ -9,7 +9,8 @@ import GHC.Exts (Constraint)
 
 import qualified  Data.Vinyl as V
 import qualified  Data.Vinyl.TypeLevel as V
-
+import qualified  Data.Vinyl.Derived as V
+import Acid.Core.Utils
 
 
 
@@ -20,6 +21,10 @@ class Segment (segmentName :: Symbol) where
 type family ToSegmentFields (segmentNames :: [Symbol]) = (segmentFields :: [(Symbol, *)]) where
   ToSegmentFields '[] = '[]
   ToSegmentFields (s ': ss) = '(s, SegmentS s) ': ToSegmentFields ss
+
+type family ToSegmentElFields (segmentNames :: [Symbol]) = (segmentFields :: [(Symbol, *)]) where
+  ToSegmentElFields '[] = '[]
+  ToSegmentElFields (s ': ss) = '(s, SegmentS s) ': ToSegmentElFields ss
 
 type family ToSegmentTypes (segmentNames :: [Symbol]) :: [*] where
   ToSegmentTypes '[] = '[]
@@ -45,6 +50,11 @@ type ValidSegmentNames segmentNames =
   , V.NatToInt (V.RLength (ToSegmentFields segmentNames))
   )
 
+npToSegmentsState :: forall ss. (ValidSegmentNames ss) => NP V.ElField (ToSegmentFields ss) -> SegmentsState ss
+npToSegmentsState np = SegmentsState $ npToARec (Proxy :: Proxy ss) np
+
+npToARec :: (ValidSegmentNames ss) => Proxy ss -> NP V.ElField (ToSegmentFields ss) -> V.AFieldRec (ToSegmentFields ss)
+npToARec _ np = npToVinylARec id np
 
 makeDefaultSegment :: forall a. KnownSegmentField a => V.ElField '(V.Fst a, (V.Snd a))
 makeDefaultSegment = (V.Label :: V.Label (V.Fst a)) V.=: (defaultState (Proxy :: Proxy (V.Fst a)))

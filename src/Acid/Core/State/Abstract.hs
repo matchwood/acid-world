@@ -22,6 +22,9 @@ import Acid.Core.Utils
 import Data.Aeson(FromJSON(..), ToJSON(..))
 import Conduit
 
+import qualified  Data.Vinyl.Derived as V
+import qualified  Data.Vinyl.TypeLevel as V
+
 
 {-
 the main definition of an state managing strategy
@@ -47,9 +50,27 @@ class AcidWorldState (i :: *) where
 class (SegmentS n ~ s) => SegmentNameToState n s
 instance (SegmentS n ~ s) => SegmentNameToState n s
 
+class (a ~ b) => SegmentFieldToSegmentField a b
+instance (a ~ b) => SegmentFieldToSegmentField a b
 
-class (AcidWorldState i, AllZip SegmentNameToState ss (ToSegmentTypes ss),  All (HasSegment ss) ss, Monad (AWUpdate i ss), Monad (AWQuery i ss)) => ValidAcidWorldState i ss
-instance (AcidWorldState i,  AllZip SegmentNameToState ss (ToSegmentTypes ss), All (HasSegment ss) ss, Monad (AWUpdate i ss), Monad (AWQuery i ss)) => ValidAcidWorldState i ss
+class ( AcidWorldState i
+      , AllZip SegmentNameToState ss (ToSegmentTypes ss)
+      , AllZip SegmentFieldToSegmentField (ToSegmentFields ss) (ToSegmentFields ss)
+      , All (HasSegment ss) ss
+      , Monad (AWUpdate i ss)
+      , Monad (AWQuery i ss)
+      , ValidSegmentNames ss)
+      => ValidAcidWorldState i ss
+
+instance ( AcidWorldState i
+      , AllZip SegmentNameToState ss (ToSegmentTypes ss)
+      , AllZip SegmentFieldToSegmentField (ToSegmentFields ss) (ToSegmentFields ss)
+      , All (HasSegment ss) ss
+      , Monad (AWUpdate i ss)
+      , Monad (AWQuery i ss)
+      , ValidSegmentNames ss)
+      => ValidAcidWorldState i ss
+
 
 askState :: forall i ss. (ValidAcidWorldState i ss) => AWQuery i ss (NP I (ToSegmentTypes ss))
 askState = sequence_NP segSNp
@@ -61,6 +82,26 @@ askState = sequence_NP segSNp
     askSegmentFromDict Dict = askSegment (Proxy :: Proxy s)
     dictNp :: NP (Dict (HasSegment ss)) ss
     dictNp = cpure_NP (Proxy :: Proxy (HasSegment ss)) Dict
+
+askState2 :: forall i ss. (ValidAcidWorldState i ss) => AWQuery i ss (SegmentsState ss)
+askState2 = fmap npToSegmentsState segsNpS
+
+  where
+    segsNpS :: AWQuery i ss (NP V.ElField (ToSegmentFields ss))
+    segsNpS = sequence'_NP segsNp
+    segsNp :: NP (AWQuery i ss :.: V.ElField) (ToSegmentFields ss)
+    segsNp = trans_NP (Proxy :: Proxy SegmentFieldToSegmentField) askSegmentFromDict dictNp
+    askSegmentFromDict :: forall s.  Proxy s -> (AWQuery i ss :.: V.ElField) s
+    askSegmentFromDict _ = undefined
+    dictNp :: NP Proxy (ToSegmentFields ss)
+    dictNp = pure_NP Proxy
+
+{-{-    segSNp :: NP (AWQuery i ss) (ToSegmentTypes ss)
+    segSNp = trans_NP (Proxy :: Proxy SegmentNameToState) askSegmentFromDict dictNp-}
+    askSegmentFromDict :: forall s. Dict (HasSegment ss) s -> AWQuery i ss (SegmentS s)
+    askSegmentFromDict Dict = askSegment (Proxy :: Proxy s)
+    dictNp :: NP (Dict (HasSegment ss)) ss
+    dictNp = cpure_NP (Proxy :: Proxy (HasSegment ss)) Dict-}
 
 
 
