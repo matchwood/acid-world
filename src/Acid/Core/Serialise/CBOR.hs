@@ -80,6 +80,7 @@ instance AcidSerialiseC AcidSerialiserCBOR where
 
 instance (Serialise seg) => AcidSerialiseSegment AcidSerialiserCBOR seg where
   serialiseSegment _ seg = toStrictByteString $ encode seg
+  deserialiseSegment _ bs = left (T.pack . show) $ decodeOrFail decode bs
 
 
 findCBORParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserCBOR ss nn -> BS.ByteString -> Either Text (Maybe (BS.ByteString, CBOREventParser ss nn))

@@ -55,10 +55,17 @@ class (AcidSerialiseSegment t (SegmentS fieldName), ToUniqueText fieldName) => A
 instance (AcidSerialiseSegment t (SegmentS fieldName), ToUniqueText fieldName) => AcidSerialiseSegmentNameConstraint t fieldName
 
 
-class (AcidSerialiseSegment t (V.Snd field), ToUniqueText (V.Fst field)) => AcidSerialiseSegmentFieldConstraint t field
-instance (AcidSerialiseSegment t (V.Snd field), ToUniqueText (V.Fst field)) => AcidSerialiseSegmentFieldConstraint t field
+class (AcidSerialiseSegment t (V.Snd field), ToUniqueText (V.Fst field), KnownSymbol (V.Fst field)) => AcidSerialiseSegmentFieldConstraint t field
+instance (AcidSerialiseSegment t (V.Snd field), ToUniqueText (V.Fst field), KnownSymbol (V.Fst field)) => AcidSerialiseSegmentFieldConstraint t field
 
-type AcidSerialiseSegments t ss = All (AcidSerialiseSegmentFieldConstraint t) (ToSegmentFields ss)
+
+
+
+class (a ~ b, KnownSegmentField a, SegmentFetching ss a, AcidSerialiseSegmentFieldConstraint t a) => SegmentFieldToSegmentFieldSerialise ss t a b
+instance (a ~ b, KnownSegmentField a, SegmentFetching ss a, AcidSerialiseSegmentFieldConstraint t a) => SegmentFieldToSegmentFieldSerialise ss t a b
+
+type ValidSegmentsSerialise t ss = (All (AcidSerialiseSegmentFieldConstraint t) (ToSegmentFields ss), ValidSegments ss, AllZip (SegmentFieldToSegmentFieldSerialise ss t) (ToSegmentFields ss) (ToSegmentFields ss))
+
 
 
 type AcidSerialiseParsers t ss nn = HM.HashMap Text (AcidSerialiseParser t ss nn)

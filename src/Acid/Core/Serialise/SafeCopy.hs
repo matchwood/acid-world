@@ -84,6 +84,7 @@ instance AcidSerialiseC AcidSerialiserSafeCopy where
 
 instance (SafeCopy seg) => AcidSerialiseSegment AcidSerialiserSafeCopy seg where
   serialiseSegment _ seg = runPut $ safePut seg
+  deserialiseSegment _ bs = left (T.pack) $ runGet safeGet bs
 
 
 makeSafeCopyParsers :: forall ss nn. (All (CanSerialiseSafeCopy ss) nn) => AcidSerialiseParsers AcidSerialiserSafeCopy ss nn

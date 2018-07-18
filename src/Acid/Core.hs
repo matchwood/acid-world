@@ -20,7 +20,7 @@ data AcidWorld  ss nn t where
                , AcidSerialiseT t ~ AWBSerialiseT b
                , AcidSerialiseConstraintAll t ss nn
                , ValidEventNames ss nn
-               , AcidSerialiseSegments t ss
+               , ValidSegmentsSerialise t ss
                ) => {
     acidWorldBackendConfig :: AWBConfig b,
     acidWorldStateConfig :: AWConfig uMonad ss,
@@ -39,7 +39,7 @@ openAcidWorld :: forall m ss nn b uMonad t.
                , AcidSerialiseT t ~ AWBSerialiseT b
                , AcidSerialiseConstraintAll t ss nn
                , ValidEventNames ss nn
-               , AcidSerialiseSegments t ss
+               , ValidSegmentsSerialise t ss
                ) => Maybe (SegmentsState ss) -> AWBConfig b -> AWConfig uMonad ss -> AcidSerialiseEventOptions t ->  m (Either Text (AcidWorld ss nn t))
 openAcidWorld mDefSt acidWorldBackendConfig acidWorldStateConfig acidWorldSerialiserOptions = do
   let defState = fromMaybe (defaultSegmentsState (Proxy :: Proxy ss)) mDefSt
@@ -50,7 +50,7 @@ openAcidWorld mDefSt acidWorldBackendConfig acidWorldStateConfig acidWorldSerial
       let parsers = makeDeserialiseParsers acidWorldSerialiserOptions (Proxy :: Proxy ss) (Proxy :: Proxy nn)
       let handles = BackendHandles {
               bhLoadEvents = (loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState) :: m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),
-              bhGetLastCheckpointState = getLastCheckpointState (Proxy :: Proxy ss) acidWorldBackendState
+              bhGetLastCheckpointState = getLastCheckpointState (Proxy :: Proxy ss) acidWorldBackendState acidWorldSerialiserOptions
             }
 
       (eAcidWorldState) <- initialiseState acidWorldStateConfig handles defState

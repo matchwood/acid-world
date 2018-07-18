@@ -19,6 +19,18 @@ import Acid.World
 import Codec.Serialise
 import Data.SafeCopy
 
+
+instance (Serialise b, IxSet.Indexable a b) => Serialise (IxSet.IxSet a b) where
+  encode = encode . IxSet.toList
+  decode = fmap IxSet.fromList $ decode
+
+instance (Aeson.ToJSON b) => Aeson.ToJSON (IxSet.IxSet a b) where
+  toJSON = Aeson.toJSON . IxSet.toList
+
+instance (Aeson.FromJSON b, IxSet.Indexable a b) => Aeson.FromJSON (IxSet.IxSet a b) where
+  parseJSON v = fmap IxSet.fromList $ Aeson.parseJSON v
+
+
 data User = User  {
   userId :: !Int,
   userFirstName :: !Text,
@@ -46,14 +58,6 @@ instance NFData User
 instance Segment "Users" where
   type SegmentS "Users" = UserIxSet
   defaultState _ = IxSet.empty
-
-
-instance Serialise UserIxSet where
-  encode = encode . IxSet.toList
-  decode = fmap IxSet.fromList $ decode
-
-instance Aeson.ToJSON UserIxSet where
-  toJSON = Aeson.toJSON . IxSet.toList
 
 insertUser :: (ValidAcidWorldState i ss, HasSegment ss  "Users") => User -> AWUpdate i ss User
 insertUser a = do
@@ -112,13 +116,6 @@ instance Segment "Addresses" where
   defaultState _ = IxSet.empty
 
 
-instance Serialise AddressIxSet where
-  encode = encode . IxSet.toList
-  decode = fmap IxSet.fromList $ decode
-
-instance Aeson.ToJSON AddressIxSet where
-  toJSON = Aeson.toJSON . IxSet.toList
-
 insertAddress :: (ValidAcidWorldState i ss, HasSegment ss  "Addresses") => Address -> AWUpdate i ss Address
 insertAddress a = do
   ls <- getSegment (Proxy :: Proxy "Addresses")
@@ -173,13 +170,6 @@ instance Segment "Phonenumbers" where
   type SegmentS "Phonenumbers" = PhonenumberIxSet
   defaultState _ = IxSet.empty
 
-
-instance Serialise PhonenumberIxSet where
-  encode = encode . IxSet.toList
-  decode = fmap IxSet.fromList $ decode
-
-instance Aeson.ToJSON PhonenumberIxSet where
-  toJSON = Aeson.toJSON . IxSet.toList
 
 insertPhonenumber :: (ValidAcidWorldState i ss, HasSegment ss  "Phonenumbers") => Phonenumber -> AWUpdate i ss Phonenumber
 insertPhonenumber a = do

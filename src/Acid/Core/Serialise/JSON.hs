@@ -61,9 +61,9 @@ instance AcidSerialiseC AcidSerialiserJSON where
   type AcidSerialiseConstraint AcidSerialiserJSON ss n = CanSerialiseJSON ss n
   type AcidSerialiseConstraintAll AcidSerialiserJSON ss nn = All (CanSerialiseJSON ss) nn
 
-instance (ToJSON seg) => AcidSerialiseSegment AcidSerialiserJSON seg where
+instance (ToJSON seg, FromJSON seg) => AcidSerialiseSegment AcidSerialiserJSON seg where
   serialiseSegment _ seg = BL.toStrict $ (Aeson.encode seg)
-
+  deserialiseSegment _ bs = left (T.pack) $ (Aeson.eitherDecode' (BL.fromStrict bs))
 
 
 
