@@ -10,7 +10,6 @@ import qualified  RIO.Time as Time
 
 import Generics.SOP
 import Generics.SOP.NP
-import Generics.SOP.Dict
 import GHC.TypeLits
 
 
@@ -36,13 +35,13 @@ class AcidWorldState (i :: *) where
   data AWConfig i (ss :: [Symbol])
   data AWUpdate i (ss :: [Symbol]) a
   data AWQuery i (ss :: [Symbol]) a
-  initialiseState :: (MonadIO z, MonadThrow z, ValidAcidWorldState i ss) => AWConfig i ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState i ss))
+  initialiseState :: (MonadIO z, ValidSegments ss) => AWConfig i ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState i ss))
   closeState :: (MonadIO z) => AWState i ss -> z ()
   closeState _ = pure ()
   getSegment :: (HasSegment ss s) =>  Proxy s -> AWUpdate i ss (SegmentS s)
   putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> AWUpdate i ss ()
   askSegment :: (HasSegment ss s) =>  Proxy s -> AWQuery i ss (SegmentS s)
-  runUpdate :: (ValidAcidWorldState i ss, ValidEventName ss n , MonadIO m) => AWState i ss -> Event n -> m (EventResult n)
+  runUpdate :: (ValidSegments ss, ValidEventName ss n , MonadIO m) => AWState i ss -> Event n -> m (EventResult n)
   runQuery :: (MonadIO m) => AWState i ss -> AWQuery i ss a -> m a
   liftQuery :: AWQuery i ss a -> AWUpdate i ss a
 
@@ -50,51 +49,53 @@ class AcidWorldState (i :: *) where
 class (SegmentS n ~ s) => SegmentNameToState n s
 instance (SegmentS n ~ s) => SegmentNameToState n s
 
-class (a ~ b) => SegmentFieldToSegmentField a b
-instance (a ~ b) => SegmentFieldToSegmentField a b
+
+
+
+class (KnownSegmentField sField, HasSegment ss (V.Fst sField)) => SegmentFetching ss sField
+instance (KnownSegmentField sField, HasSegment ss (V.Fst sField)) => SegmentFetching ss sField
+
+class (a ~ b, KnownSegmentField a, SegmentFetching ss a) => SegmentFieldToSegmentField ss a b
+instance (a ~ b, KnownSegmentField a, SegmentFetching ss a) => SegmentFieldToSegmentField ss a b
+
+class ( AllZip SegmentNameToState ss (ToSegmentTypes ss)
+      , AllZip (SegmentFieldToSegmentField ss) (ToSegmentFields ss) (ToSegmentFields ss)
+      , All (HasSegment ss) ss
+      , ValidSegmentNames ss)
+      => ValidSegments ss
+
+
+instance ( AllZip SegmentNameToState ss (ToSegmentTypes ss)
+      , AllZip (SegmentFieldToSegmentField ss) (ToSegmentFields ss) (ToSegmentFields ss)
+      , All (HasSegment ss) ss
+      , ValidSegmentNames ss)
+      => ValidSegments ss
 
 class ( AcidWorldState i
-      , AllZip SegmentNameToState ss (ToSegmentTypes ss)
-      , AllZip SegmentFieldToSegmentField (ToSegmentFields ss) (ToSegmentFields ss)
-      , All (HasSegment ss) ss
       , Monad (AWUpdate i ss)
       , Monad (AWQuery i ss)
-      , ValidSegmentNames ss)
+      , ValidSegments ss)
       => ValidAcidWorldState i ss
 
 instance ( AcidWorldState i
-      , AllZip SegmentNameToState ss (ToSegmentTypes ss)
-      , AllZip SegmentFieldToSegmentField (ToSegmentFields ss) (ToSegmentFields ss)
-      , All (HasSegment ss) ss
       , Monad (AWUpdate i ss)
       , Monad (AWQuery i ss)
-      , ValidSegmentNames ss)
+      , ValidSegments ss)
       => ValidAcidWorldState i ss
 
 
-askState :: forall i ss. (ValidAcidWorldState i ss) => AWQuery i ss (NP I (ToSegmentTypes ss))
-askState = sequence_NP segSNp
-
+askStateNp :: forall i ss. (ValidAcidWorldState i ss) => AWQuery i ss (NP V.ElField (ToSegmentFields ss))
+askStateNp = sequence'_NP segsNp
   where
-    segSNp :: NP (AWQuery i ss) (ToSegmentTypes ss)
-    segSNp = trans_NP (Proxy :: Proxy SegmentNameToState) askSegmentFromDict dictNp
-    askSegmentFromDict :: forall s. Dict (HasSegment ss) s -> AWQuery i ss (SegmentS s)
-    askSegmentFromDict Dict = askSegment (Proxy :: Proxy s)
-    dictNp :: NP (Dict (HasSegment ss)) ss
-    dictNp = cpure_NP (Proxy :: Proxy (HasSegment ss)) Dict
-
-askState2 :: forall i ss. (ValidAcidWorldState i ss) => AWQuery i ss (SegmentsState ss)
-askState2 = fmap npToSegmentsState segsNpS
-
-  where
-    segsNpS :: AWQuery i ss (NP V.ElField (ToSegmentFields ss))
-    segsNpS = sequence'_NP segsNp
     segsNp :: NP (AWQuery i ss :.: V.ElField) (ToSegmentFields ss)
-    segsNp = trans_NP (Proxy :: Proxy SegmentFieldToSegmentField) askSegmentFromDict dictNp
-    askSegmentFromDict :: forall s.  Proxy s -> (AWQuery i ss :.: V.ElField) s
-    askSegmentFromDict _ = undefined
-    dictNp :: NP Proxy (ToSegmentFields ss)
-    dictNp = pure_NP Proxy
+    segsNp = trans_NP (Proxy :: Proxy (SegmentFieldToSegmentField ss)) askSegmentFromProxy proxyNp
+    askSegmentFromProxy :: forall sField. (SegmentFetching ss sField) =>  Proxy sField -> (AWQuery i ss :.: V.ElField) sField
+    askSegmentFromProxy _ =  Comp $  fmap V.Field $ askSegment (Proxy :: Proxy (V.Fst sField))
+    proxyNp :: NP Proxy (ToSegmentFields ss)
+    proxyNp = pure_NP Proxy
+
+askSegmentsState :: forall i ss. (ValidAcidWorldState i ss) => AWQuery i ss (SegmentsState ss)
+askSegmentsState = fmap npToSegmentsState askStateNp
 
 {-{-    segSNp :: NP (AWQuery i ss) (ToSegmentTypes ss)
     segSNp = trans_NP (Proxy :: Proxy SegmentNameToState) askSegmentFromDict dictNp-}
@@ -116,11 +117,6 @@ data BackendHandles m ss nn = BackendHandles {
   Events and basic event utilities
 -}
 
-class ToUniqueText (a :: k) where
-  toUniqueText :: Proxy a -> Text
-
-instance (KnownSymbol a) => ToUniqueText (a :: Symbol) where
-  toUniqueText = T.pack . symbolVal
 
 
 class (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsValidEvent ss nn (n :: Symbol)
@@ -130,7 +126,7 @@ instance (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsVa
 class (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss (n :: Symbol)
 instance (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss n
 
-type ValidEventNames ss nn = All (ValidEventName ss) nn
+type ValidEventNames ss nn = (All (ValidEventName ss) nn, UniqueElementsWithErr nn ~ 'True)
 
 
 

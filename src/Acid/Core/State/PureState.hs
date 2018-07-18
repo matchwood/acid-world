@@ -32,7 +32,7 @@ instance AcidWorldState AcidStatePureState where
 
   putSegment ps seg = AWUpdatePureState $ St.modify' (putSegmentP ps seg)
   askSegment ps = AWQueryPureState $ getSegmentP ps `fmap` Re.ask
-  initialiseState :: forall z ss nn . (MonadIO z, MonadThrow z, ValidAcidWorldState AcidStatePureState ss) => AWConfig AcidStatePureState ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState AcidStatePureState ss))
+  initialiseState :: forall z ss nn. (MonadIO z,  ValidSegments ss) => AWConfig AcidStatePureState ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState AcidStatePureState ss))
   initialiseState _ (BackendHandles{..}) defState = do
     mCpState <- bhGetLastCheckpointState
 

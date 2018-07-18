@@ -57,7 +57,8 @@ ephemeralBackendTests (AppValidBackend (bConf :: IO (AWBConfig b))) (AppValidSer
 
 persistentBackendTests :: AppValidBackend -> AppValidSerialiser -> [TestTree]
 persistentBackendTests (AppValidBackend (bConf :: IO (AWBConfig b))) (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = [
-    testCaseSteps "insertAndRestoreState" $ unit_insertAndRestoreState bConf o
+    testCaseSteps "insertAndRestoreState" $ unit_insertAndRestoreState bConf o,
+    testCaseSteps "checkpointAndRestoreState" $ unit_checkpointAndRestoreState bConf o
   ]
 
 
@@ -124,3 +125,16 @@ unit_insertAndRestoreState b o step = do
   step $ "Fetched users: " ++ (show . length $ us3)
 
   assertBool "Fetched user list did not match inserted users" (L.sort (us ++ us2) == L.sort us3)
+
+unit_checkpointAndRestoreState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => IO (AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
+unit_checkpointAndRestoreState b o step = do
+  us <- QC.generate $ generateUsers 1000
+  step "Opening acid world"
+  aw <- openAppAcidWorldFresh b o
+  step "Inserting users"
+  mapM_ (runInsertUser aw) us
+  step "Creating checkpoint"
+  createCheckpoint aw
+  step "Closing acid world"
+  closeAcidWorld aw
+  assertBool "???" True

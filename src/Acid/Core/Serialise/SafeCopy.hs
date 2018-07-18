@@ -17,6 +17,7 @@ import Data.Serialize
 import qualified Data.UUID  as UUID
 
 
+import Acid.Core.Utils
 import Acid.Core.State
 import Acid.Core.Serialise.Abstract
 import Conduit
@@ -81,7 +82,8 @@ instance AcidSerialiseC AcidSerialiserSafeCopy where
   type AcidSerialiseConstraint AcidSerialiserSafeCopy ss n = CanSerialiseSafeCopy ss n
   type AcidSerialiseConstraintAll AcidSerialiserSafeCopy ss nn = All (CanSerialiseSafeCopy ss) nn
 
-
+instance (SafeCopy seg) => AcidSerialiseSegment AcidSerialiserSafeCopy seg where
+  serialiseSegment _ seg = runPut $ safePut seg
 
 
 makeSafeCopyParsers :: forall ss nn. (All (CanSerialiseSafeCopy ss) nn) => AcidSerialiseParsers AcidSerialiserSafeCopy ss nn

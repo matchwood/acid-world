@@ -19,7 +19,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
 import Data.Aeson(FromJSON(..), ToJSON(..), Value(..), Object)
 
-
+import Acid.Core.Utils
 import Acid.Core.State
 import Acid.Core.Serialise.Abstract
 import Conduit
@@ -60,6 +60,11 @@ instance (ValidEventName ss n, All FromJSON (EventArgs n), All ToJSON (EventArgs
 instance AcidSerialiseC AcidSerialiserJSON where
   type AcidSerialiseConstraint AcidSerialiserJSON ss n = CanSerialiseJSON ss n
   type AcidSerialiseConstraintAll AcidSerialiserJSON ss nn = All (CanSerialiseJSON ss) nn
+
+instance (ToJSON seg) => AcidSerialiseSegment AcidSerialiserJSON seg where
+  serialiseSegment _ seg = BL.toStrict $ (Aeson.encode seg)
+
+
 
 
 makeJSONParsers :: forall ss nn. (All (CanSerialiseJSON ss) nn) => AcidSerialiseParsers AcidSerialiserJSON ss nn

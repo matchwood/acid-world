@@ -1,4 +1,6 @@
 
+{-# LANGUAGE UndecidableInstances #-}
+
 module Acid.Core.Serialise.Abstract  where
 
 
@@ -6,13 +8,17 @@ import RIO
 import qualified  RIO.HashMap as HM
 import qualified  RIO.Text as T
 
+import Generics.SOP
 import GHC.TypeLits
 import GHC.Exts (Constraint)
 
 import Data.Proxy(Proxy(..))
 
+import Acid.Core.Utils
+import Acid.Core.Segment
 import Acid.Core.State
 import Data.Typeable
+import qualified  Data.Vinyl.TypeLevel as V
 
 import Conduit
 
@@ -30,14 +36,26 @@ class AcidSerialiseEvent (t :: k) where
   serialiserName p = T.pack $ (showsTypeRep . typeRep $ p) ""
   serialiseEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> StorableEvent ss nn n -> AcidSerialiseT t
   deserialiseEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> (Either Text (StorableEvent ss nn n))
+
   makeDeserialiseParsers :: (ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn) => AcidSerialiseEventOptions t -> Proxy ss -> Proxy nn -> AcidSerialiseParsers t ss nn
   deserialiseEventStream :: (Monad m) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> (ConduitT (AcidSerialiseT t) (Either Text (WrappedEvent ss nn)) (m) ())
+
+
+class AcidSerialiseSegment (t :: k) seg where
+  serialiseSegment :: AcidSerialiseEventOptions t -> seg -> AcidSerialiseT t
 
 
 
 class AcidSerialiseC t where
   type AcidSerialiseConstraint t (ss :: [Symbol]) (n :: Symbol) :: Constraint
   type AcidSerialiseConstraintAll t (ss :: [Symbol]) (nn :: [Symbol]) :: Constraint
+
+
+class (AcidSerialiseSegment t (V.Snd field), ToUniqueText (V.Fst field)) => AcidSerialiseSegmentFieldConstraint t field
+instance (AcidSerialiseSegment t (V.Snd field), ToUniqueText (V.Fst field)) => AcidSerialiseSegmentFieldConstraint t field
+
+type AcidSerialiseSegments t ss = All (AcidSerialiseSegmentFieldConstraint t) (ToSegmentFields ss)
+
 
 type AcidSerialiseParsers t ss nn = HM.HashMap Text (AcidSerialiseParser t ss nn)
 

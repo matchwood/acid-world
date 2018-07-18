@@ -9,12 +9,11 @@ import GHC.Exts (Constraint)
 
 import qualified  Data.Vinyl as V
 import qualified  Data.Vinyl.TypeLevel as V
-import qualified  Data.Vinyl.Derived as V
 import Acid.Core.Utils
 
 
 
-class Segment (segmentName :: Symbol) where
+class (ToUniqueText segmentName) => Segment (segmentName :: Symbol) where
   type SegmentS segmentName :: *
   defaultState :: Proxy segmentName -> SegmentS segmentName
 
@@ -44,10 +43,12 @@ type family HasSegments (allSegmentNames :: [Symbol]) (segmentNames :: [Symbol])
   HasSegments allSegmentNames segmentNames = V.AllConstrained (HasSegment allSegmentNames) segmentNames
 
 
+
 type ValidSegmentNames segmentNames =
   ( V.AllFields (ToSegmentFields segmentNames)
   , V.AllConstrained KnownSegmentField (ToSegmentFields segmentNames)
   , V.NatToInt (V.RLength (ToSegmentFields segmentNames))
+  , UniqueElementsWithErr segmentNames ~ 'True
   )
 
 npToSegmentsState :: forall ss. (ValidSegmentNames ss) => NP V.ElField (ToSegmentFields ss) -> SegmentsState ss
@@ -68,3 +69,5 @@ putSegmentP _ seg (SegmentsState fr) = SegmentsState $ V.rputf (V.Label :: V.Lab
 
 getSegmentP :: forall s ss. (HasSegment ss s) => Proxy s ->  SegmentsState ss -> SegmentS s
 getSegmentP _ (SegmentsState fr) = V.getField $ V.rgetf (V.Label :: V.Label s) fr
+
+

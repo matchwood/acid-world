@@ -28,6 +28,7 @@ import Control.Arrow (left)
 import Control.Monad.ST
 import Conduit
 
+import Acid.Core.Utils
 import Acid.Core.State
 
 data AcidSerialiserCBOR
@@ -77,7 +78,8 @@ instance AcidSerialiseC AcidSerialiserCBOR where
   type AcidSerialiseConstraint AcidSerialiserCBOR ss n = CanSerialiseCBOR ss n
   type AcidSerialiseConstraintAll AcidSerialiserCBOR ss nn = All (CanSerialiseCBOR ss) nn
 
-
+instance (Serialise seg) => AcidSerialiseSegment AcidSerialiserCBOR seg where
+  serialiseSegment _ seg = toStrictByteString $ encode seg
 
 
 findCBORParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserCBOR ss nn -> BS.ByteString -> Either Text (Maybe (BS.ByteString, CBOREventParser ss nn))

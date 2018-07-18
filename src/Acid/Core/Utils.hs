@@ -11,9 +11,17 @@ import qualified  Data.Vinyl.Functor as V
 import qualified  Data.Vinyl.Curry as V
 import qualified  Data.Vinyl.ARec as V
 import qualified  Data.Vinyl.TypeLevel as V
+import Data.Proxy(Proxy(..))
 
 import Generics.SOP.NP
-import Generics.SOP
+import qualified Generics.SOP as SOP
+
+
+class ToUniqueText (a :: k) where
+  toUniqueText :: Proxy a -> Text
+
+instance (KnownSymbol a) => ToUniqueText (a :: Symbol) where
+  toUniqueText = T.pack . symbolVal
 
 showT :: (Show a) => a -> T.Text
 showT = utf8BuilderToText . displayShow
@@ -45,6 +53,28 @@ type family IfOrErrC (a :: Bool) (err :: ErrorMessage) :: Constraint where
 class (Elem a b ~ 'True) => IsElem (a :: k) (b :: [k])
 instance  (Elem a b ~ 'True) => IsElem a b
 
+type family And (a :: Bool) (b :: Bool) :: Bool where
+    And 'False a = 'False
+    And 'True a = a
+    And a 'False = 'False
+    And a 'True = a
+    And a a = a
+
+type family UniqueElementsWithErr (a :: [k]) :: Bool where
+  UniqueElementsWithErr a = UniqueElementsWithErr' a a
+
+type family UniqueElementsWithErr' (a :: [k]) (b :: [k]) :: Bool where
+  UniqueElementsWithErr' '[] _ = 'True
+  UniqueElementsWithErr' (a ': xs) b = And (NotWithErr (Elem a xs) (
+    'Text "Duplicate element found: " ':<>:
+    'ShowType a ':$$:
+    'Text " in type list: " ':<>: 'ShowType b
+    )) (UniqueElementsWithErr' xs b)
+
+type family NotWithErr (a :: Bool) (err :: ErrorMessage) = (res :: Bool)  where
+    NotWithErr 'False _ = 'True
+    NotWithErr 'True err = TypeError err
+
 
 npToVinylRec :: (forall a. f a -> g a) -> NP f xs -> V.Rec g xs
 npToVinylRec _ Nil = V.RNil
@@ -61,11 +91,11 @@ vinylARecToNp :: (V.RecApplicative xs, V.AllConstrained (V.IndexableField xs) xs
 vinylARecToNp f arec =  vinylRecToNp f $ V.fromARec arec
 
 
-npIToVinylHList :: NP I xs -> V.HList xs
-npIToVinylHList np = npToVinylRec (V.Identity . unI) np
+npIToVinylHList :: NP SOP.I xs -> V.HList xs
+npIToVinylHList np = npToVinylRec (V.Identity . SOP.unI) np
 
-vinylHListToNpI :: V.HList xs -> NP I xs
-vinylHListToNpI hl = vinylRecToNp (I . V.getIdentity) hl
+vinylHListToNpI :: V.HList xs -> NP SOP.I xs
+vinylHListToNpI hl = vinylRecToNp (SOP.I . V.getIdentity) hl
 
 -- steal these from vinyl
 type NPCurried ts a = V.Curried ts a
@@ -73,7 +103,7 @@ type NPCurriedF f ts a = V.CurriedF f ts a
 
 class NPCurry ts where
   npCurry :: (NP f ts -> a) -> NPCurriedF f ts a
-  npICurry :: (NP I ts -> a) -> NPCurried ts a
+  npICurry :: (NP SOP.I ts -> a) -> NPCurried ts a
 
 
 instance NPCurry '[] where
@@ -85,7 +115,7 @@ instance NPCurry '[] where
 instance NPCurry ts => NPCurry (t ': ts) where
   npCurry f x = npCurry (\xs -> f (x :* xs))
   {-# INLINABLE npCurry #-}
-  npICurry f x = npICurry (\xs -> f (I x :* xs))
+  npICurry f x = npICurry (\xs -> f (SOP.I x :* xs))
   {-# INLINABLE npICurry #-}
 
 
@@ -95,7 +125,7 @@ npUncurry x Nil      = x
 npUncurry f (x :* xs) = npUncurry (f x) xs
 {-# INLINABLE npUncurry #-}
 
-npIUncurry :: NPCurried ts a -> NP I ts -> a
+npIUncurry :: NPCurried ts a -> NP SOP.I ts -> a
 npIUncurry x Nil      = x
-npIUncurry f (I x :* xs) = npIUncurry (f x) xs
+npIUncurry f (SOP.I x :* xs) = npIUncurry (f x) xs
 {-# INLINABLE npIUncurry #-}

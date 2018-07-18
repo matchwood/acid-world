@@ -7,10 +7,11 @@ import RIO
 import qualified RIO.Text as T
 import Data.Typeable
 import Data.Proxy(Proxy(..))
-
+import Generics.SOP
 import Acid.Core.Segment
 import Acid.Core.State
 import Conduit
+import Acid.Core.Serialise.Abstract
 
 class AcidWorldBackend (b :: k) where
   data AWBState b
@@ -24,8 +25,8 @@ class AcidWorldBackend (b :: k) where
   closeBackend _ = pure ()
 
 
-  createCheckpoint :: (MonadIO m, ValidAcidWorldState u ss) => Proxy ss -> AWBState b -> AWState u ss -> m ()
-  createCheckpoint _ _ _ = pure ()
+  createCheckpointBackend :: (AcidSerialiseT t ~ AWBSerialiseT b, MonadIO m, ValidAcidWorldState u ss, All (AcidSerialiseSegmentFieldConstraint t) (ToSegmentFields ss)) =>  AWBState b -> AWState u ss -> AcidSerialiseEventOptions t -> m ()
+  createCheckpointBackend _ _ _ = pure ()
 
   -- should return the most recent checkpoint state, if any
   getLastCheckpointState :: (MonadIO m) => Proxy ss -> AWBState b -> m (Either Text (Maybe (SegmentsState ss)))

@@ -32,7 +32,8 @@ type AppValidSerialiserConstraint s = (
   AcidSerialiseEvent s,
   AcidSerialiseConstraintAll s AppSegments AppEvents,
   AcidSerialiseT s ~ BS.ByteString,
-  AcidSerialiseConstraint s AppSegments "insertUser"
+  AcidSerialiseConstraint s AppSegments "insertUser",
+  AcidSerialiseSegments s AppSegments
   )
 
 type AppValidBackendConstraint b = (
@@ -112,6 +113,13 @@ instance Segment "Users" where
   defaultState _ = IxSet.empty
 
 
+instance Serialise UserIxSet where
+  encode = encode . IxSet.toList
+  decode = fmap IxSet.fromList $ decode
+
+instance Aeson.ToJSON UserIxSet where
+  toJSON = Aeson.toJSON . IxSet.toList
+
 insertUser :: (ValidAcidWorldState i ss, HasSegment ss  "Users") => User -> AWUpdate i ss User
 insertUser a = do
   ls <- getSegment (Proxy :: Proxy "Users")
@@ -162,7 +170,7 @@ mkTempDir = do
 
 
 
-openAppAcidWorldRestoreState :: (AcidSerialiseT s ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
+openAppAcidWorldRestoreState :: (AcidSerialiseT s ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, AcidSerialiseSegments s AppSegments) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
 openAppAcidWorldRestoreState opts s = do
   t <- mkTempDir
   let e = topLevelStoredStateDir <> "/" <> "testState" <> "/" <> s
@@ -173,14 +181,14 @@ openAppAcidWorldRestoreState opts s = do
   putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
   pure aw
 
-openAppAcidWorldFresh :: (AcidSerialiseT s ~ BS.ByteString, AcidWorldBackend b, AWBSerialiseT b ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => IO (AWBConfig b) -> (AcidSerialiseEventOptions s) -> IO (AppAW s)
+openAppAcidWorldFresh :: (AcidSerialiseT s ~ BS.ByteString, AcidWorldBackend b, AWBSerialiseT b ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, AcidSerialiseSegments s AppSegments) => IO (AWBConfig b) -> (AcidSerialiseEventOptions s) -> IO (AppAW s)
 openAppAcidWorldFresh bConfIO opts = do
   bConf <- bConfIO
 
   throwEither $ openAcidWorld Nothing bConf AWConfigPureState opts
 
 
-openAppAcidWorldFreshFS :: (AcidSerialiseT s ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents) => (AcidSerialiseEventOptions s) -> IO (AppAW s)
+openAppAcidWorldFreshFS :: (AcidSerialiseT s ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, AcidSerialiseSegments s AppSegments) => (AcidSerialiseEventOptions s) -> IO (AppAW s)
 openAppAcidWorldFreshFS opts = openAppAcidWorldFresh (fmap AWBConfigFS mkTempDir) opts
 
 closeAndReopen :: Middleware s

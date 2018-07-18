@@ -19,8 +19,8 @@ data AcidWorld  ss nn t where
                , AcidSerialiseEvent t
                , AcidSerialiseT t ~ AWBSerialiseT b
                , AcidSerialiseConstraintAll t ss nn
-               , ValidSegmentNames ss
                , ValidEventNames ss nn
+               , AcidSerialiseSegments t ss
                ) => {
     acidWorldBackendConfig :: AWBConfig b,
     acidWorldStateConfig :: AWConfig uMonad ss,
@@ -33,14 +33,13 @@ data AcidWorld  ss nn t where
 
 openAcidWorld :: forall m ss nn b uMonad t.
                ( MonadIO m
-               , MonadThrow m
                , AcidWorldBackend b
                , ValidAcidWorldState uMonad ss
                , AcidSerialiseEvent t
                , AcidSerialiseT t ~ AWBSerialiseT b
                , AcidSerialiseConstraintAll t ss nn
-               , ValidSegmentNames ss
                , ValidEventNames ss nn
+               , AcidSerialiseSegments t ss
                ) => Maybe (SegmentsState ss) -> AWBConfig b -> AWConfig uMonad ss -> AcidSerialiseEventOptions t ->  m (Either Text (AcidWorld ss nn t))
 openAcidWorld mDefSt acidWorldBackendConfig acidWorldStateConfig acidWorldSerialiserOptions = do
   let defState = fromMaybe (defaultSegmentsState (Proxy :: Proxy ss)) mDefSt
@@ -64,7 +63,7 @@ closeAcidWorld (AcidWorld {..}) = do
   closeBackend acidWorldBackendState
   closeState acidWorldState
 
-reopenAcidWorld :: (MonadIO m, MonadThrow m) => AcidWorld ss nn t -> m (Either Text (AcidWorld ss nn t))
+reopenAcidWorld :: (MonadIO m) => AcidWorld ss nn t -> m (Either Text (AcidWorld ss nn t))
 reopenAcidWorld (AcidWorld {..}) = do
   openAcidWorld Nothing (acidWorldBackendConfig) (acidWorldStateConfig) acidWorldSerialiserOptions
 
@@ -76,7 +75,8 @@ query ::forall ss nn t m a. MonadIO m => AcidWorld ss nn t -> (forall i. ValidAc
 query (AcidWorld {..}) q = runQuery acidWorldState q
 
 
-
+createCheckpoint ::forall ss nn t m. MonadIO m => AcidWorld ss nn t -> m ()
+createCheckpoint (AcidWorld {..}) = createCheckpointBackend acidWorldBackendState acidWorldState acidWorldSerialiserOptions
 {-
 AcidWorldBackend
 -}

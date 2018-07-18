@@ -3,14 +3,25 @@
 
 module Acid.Core.Backend.FS where
 import RIO
+import qualified RIO.Text as T
 import System.IO (openBinaryFile, IOMode(..))
 import qualified RIO.Directory as Dir
 import qualified  RIO.ByteString as BS
 import qualified Control.Concurrent.STM.TMVar as  TMVar
 import qualified Control.Concurrent.STM  as STM
 
+import Data.Proxy(Proxy(..))
+
+
+import Generics.SOP
+import Generics.SOP.NP
+import qualified  Data.Vinyl.Derived as V
+import qualified  Data.Vinyl.TypeLevel as V
+
 import Acid.Core.State
+import Acid.Core.Utils
 import Acid.Core.Backend.Abstract
+import Acid.Core.Serialise.Abstract
 import Conduit
 
 data AcidWorldBackendFS
@@ -48,17 +59,16 @@ instance AcidWorldBackend AcidWorldBackendFS where
     hdl <- liftIO $ openBinaryFile eventPath ReadWriteMode
     hdlV <- liftIO $ STM.atomically $ newTMVar hdl
     pure . pure $ AWBStateFS c{aWBConfigFSStateDir = stateP} hdlV
-
-  createCheckpoint _ s awu = do
+  createCheckpointBackend s awu t = do
     sToWrite <- modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
       let eventPath = makeEventPath (aWBConfigFSStateDir . aWBStateFSConfig $ s)
           nextEventFile = eventPath <> "1"
       liftIO $ hClose hdl
       Dir.renameFile eventPath nextEventFile
-      hdl <- liftIO $ openBinaryFile eventPath ReadWriteMode
-      st <- runQuery awu askState
-      pure (hdl, st)
-    undefined
+      hdl' <- liftIO $ openBinaryFile eventPath ReadWriteMode
+      st <- runQuery awu askStateNp
+      pure (hdl', st)
+    writeCheckpoint s t sToWrite
 
 
   closeBackend s = modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
@@ -79,6 +89,16 @@ instance AcidWorldBackend AcidWorldBackendFS where
     runUpdate awu e
 
 
+writeCheckpoint :: forall t sFields m. (AcidSerialiseT t ~ BS.ByteString, MonadIO m,  All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()
+writeCheckpoint s t np = do
+  let cpFolder = (aWBConfigFSStateDir . aWBStateFSConfig $ s) <> "/checkpoint"
+  Dir.createDirectoryIfMissing True cpFolder
+  ctraverse__NP (Proxy :: Proxy (AcidSerialiseSegmentFieldConstraint t)) (writeSegment t cpFolder) np
+
+
+writeSegment :: forall t m fs. (AcidSerialiseT t ~ BS.ByteString, MonadIO m, AcidSerialiseSegmentFieldConstraint t fs) => AcidSerialiseEventOptions t -> FilePath -> V.ElField fs -> m ()
+writeSegment t cpFolder ((V.Field seg)) = do
+  BS.writeFile (cpFolder <> "/" <> T.unpack (toUniqueText (Proxy :: Proxy (V.Fst fs)))) (serialiseSegment t seg)
 
 makeEventPath :: FilePath -> FilePath
 makeEventPath fp = fp <> "/" <> "events"
