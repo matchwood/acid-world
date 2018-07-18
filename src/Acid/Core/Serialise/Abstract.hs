@@ -51,6 +51,10 @@ class AcidSerialiseC t where
   type AcidSerialiseConstraintAll t (ss :: [Symbol]) (nn :: [Symbol]) :: Constraint
 
 
+class (AcidSerialiseSegment t (SegmentS fieldName), ToUniqueText fieldName) => AcidSerialiseSegmentNameConstraint t fieldName
+instance (AcidSerialiseSegment t (SegmentS fieldName), ToUniqueText fieldName) => AcidSerialiseSegmentNameConstraint t fieldName
+
+
 class (AcidSerialiseSegment t (V.Snd field), ToUniqueText (V.Fst field)) => AcidSerialiseSegmentFieldConstraint t field
 instance (AcidSerialiseSegment t (V.Snd field), ToUniqueText (V.Fst field)) => AcidSerialiseSegmentFieldConstraint t field
 

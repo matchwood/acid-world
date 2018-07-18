@@ -110,16 +110,16 @@ writeSegment t cpFolder ((V.Field seg)) = do
   BS.writeFile (cpFolder <> "/" <> T.unpack (toUniqueText (Proxy :: Proxy (V.Fst fs)))) (serialiseSegment t seg)
 
 readLastCheckpointState :: forall ss m t. (ValidSegments ss,  MonadIO m, AcidSerialiseT t ~ BS.ByteString, All (AcidSerialiseSegmentFieldConstraint t) (ToSegmentFields ss)) => FilePath -> Proxy ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either Text (Maybe (SegmentsState ss)))
-readLastCheckpointState sPath _ _ t = (fmap . fmap) (Just . npToSegmentsState) segsNpE
+readLastCheckpointState sPath _ _ t = undefined --(fmap . fmap) (Just . npToSegmentsState) segsNpE
 
   where
     segsNpE :: m (Either Text (NP V.ElField (ToSegmentFields ss)))
     segsNpE = unComp $ sequence'_NP segsNp
     segsNp :: NP ((m :.: Either Text) :.: V.ElField) (ToSegmentFields ss)
-    segsNp = trans_NP (Proxy :: Proxy (SegmentFieldToSegmentField ss)) readSegmentFromProxy proxyNp
-    readSegmentFromProxy :: forall sField. (SegmentFetching ss sField) => Proxy sField -> ((m :.: Either Text) :.: V.ElField) sField
+    segsNp = trans_NP (Proxy :: Proxy (AcidSerialiseSegmentFieldConstraint t)) readSegmentFromProxy proxyNp
+    readSegmentFromProxy :: forall sField. (AcidSerialiseSegmentFieldConstraint t sField) => Proxy sField -> ((m :.: Either Text) :.: V.ElField) sField
     readSegmentFromProxy _ =  Comp $  fmap V.Field $  Comp $ readSegment (Proxy :: Proxy (V.Fst sField))
-    readSegment :: (SegmentFetching ss sName) => Proxy sField -> m (Either Text (SegmentS sName))
+    readSegment :: forall sName. (AcidSerialiseSegmentNameConstraint t sName) => (AcidSerialiseSegment t (SegmentS sName)) => Proxy sName -> m (Either Text (SegmentS sName))
     readSegment ps = do
       let fPath = sPath <> "/" <> T.unpack (toUniqueText ps)
       bs <- BS.readFile fPath
