@@ -7,6 +7,8 @@ module Acid.Core.Serialise.Abstract  where
 import RIO
 import qualified  RIO.HashMap as HM
 import qualified  RIO.Text as T
+import qualified  RIO.ByteString as BS
+import qualified  RIO.ByteString.Lazy as BL
 
 import Generics.SOP
 import GHC.TypeLits
@@ -30,7 +32,13 @@ import Conduit
 class AcidSerialiseEvent (t :: k) where
   data AcidSerialiseEventOptions t :: *
   type AcidSerialiseT t :: *
+  type AcidSerialiseConduitT t :: *
+
   type AcidSerialiseParser t (ss :: [Symbol]) (nn :: [Symbol]) :: *
+
+  tConversions :: AcidSerialiseEventOptions t -> (AcidSerialiseT t -> AcidSerialiseConduitT t, AcidSerialiseConduitT t -> AcidSerialiseT t)
+  default tConversions :: (AcidSerialiseT t ~ BL.ByteString, AcidSerialiseConduitT t ~ BS.ByteString) => AcidSerialiseEventOptions t -> (AcidSerialiseT t -> AcidSerialiseConduitT t, AcidSerialiseConduitT t -> AcidSerialiseT t)
+  tConversions _ = (BL.toStrict, BL.fromStrict)
   serialiserName :: Proxy t -> Text
   default serialiserName :: (Typeable t) => Proxy t -> Text
   serialiserName p = T.pack $ (showsTypeRep . typeRep $ p) ""
@@ -38,8 +46,13 @@ class AcidSerialiseEvent (t :: k) where
   deserialiseEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> (Either Text (StorableEvent ss nn n))
 
   makeDeserialiseParsers :: (ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn) => AcidSerialiseEventOptions t -> Proxy ss -> Proxy nn -> AcidSerialiseParsers t ss nn
-  deserialiseEventStream :: (Monad m) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> (ConduitT (AcidSerialiseT t) (Either Text (WrappedEvent ss nn)) (m) ())
+  deserialiseEventStream :: (Monad m) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> (ConduitT (AcidSerialiseConduitT t) (Either Text (WrappedEvent ss nn)) (m) ())
 
+toConduitType :: (AcidSerialiseEvent t) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> AcidSerialiseConduitT t
+toConduitType = fst . tConversions
+
+fromConduitType :: (AcidSerialiseEvent t) => AcidSerialiseEventOptions t -> AcidSerialiseConduitT t -> AcidSerialiseT t
+fromConduitType = snd . tConversions
 
 class AcidSerialiseSegment (t :: k) seg where
   serialiseSegment :: AcidSerialiseEventOptions t -> seg -> AcidSerialiseT t
@@ -72,9 +85,9 @@ type AcidSerialiseParsers t ss nn = HM.HashMap Text (AcidSerialiseParser t ss nn
 
 
 deserialiseWrappedEvent :: forall t ss (nn :: [Symbol]). (AcidSerialiseEvent t, ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> Either Text (WrappedEvent ss nn)
-deserialiseWrappedEvent o s = deserialiseWrappedEventWithParsers o (makeDeserialiseParsers o (Proxy :: Proxy ss) (Proxy :: Proxy nn)) s
+deserialiseWrappedEvent o s = deserialiseWrappedEventWithParsers o (makeDeserialiseParsers o (Proxy :: Proxy ss) (Proxy :: Proxy nn)) (toConduitType o s)
 
-deserialiseWrappedEventWithParsers :: (AcidSerialiseEvent t) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> AcidSerialiseT t -> Either Text (WrappedEvent ss nn)
+deserialiseWrappedEventWithParsers :: (AcidSerialiseEvent t) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> AcidSerialiseConduitT t -> Either Text (WrappedEvent ss nn)
 deserialiseWrappedEventWithParsers o ps s =
   case runIdentity . runConduit $ yieldMany [s] .| (deserialiseEventStream o ps) .| sinkList of
     [] -> Left "Expected to deserialise one event, got none"

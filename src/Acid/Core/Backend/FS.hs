@@ -7,6 +7,7 @@ import qualified RIO.Text as T
 import System.IO (openBinaryFile, IOMode(..))
 import qualified RIO.Directory as Dir
 import qualified  RIO.ByteString as BS
+import qualified  RIO.ByteString.Lazy as BL
 import qualified Control.Concurrent.STM.TMVar as  TMVar
 import qualified Control.Concurrent.STM  as STM
 
@@ -52,7 +53,8 @@ instance AcidWorldBackend AcidWorldBackendFS where
   data AWBConfig AcidWorldBackendFS = AWBConfigFS {
     aWBConfigFSStateDir :: FilePath
   }
-  type AWBSerialiseT AcidWorldBackendFS  = BS.ByteString
+  type AWBSerialiseT AcidWorldBackendFS = BL.ByteString
+  type AWBSerialiseConduitT AcidWorldBackendFS = BS.ByteString
   initialiseBackend _ c _  = do
     stateP <- Dir.makeAbsolute (aWBConfigFSStateDir c)
     Dir.createDirectoryIfMissing True stateP
@@ -93,23 +95,23 @@ instance AcidWorldBackend AcidWorldBackendFS where
   -- this should be bracketed and the runUpdate should return the initial state, so we can rollback if necessary @todo
   handleUpdateEvent serializer s awu (e :: Event n) = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
     stE <- mkStorableEvent e
-    BS.hPut hdl $ serializer stE
+    BL.hPut hdl $ serializer stE
     hFlush hdl
     runUpdate awu e
 
 
-writeCheckpoint :: forall t sFields m. (AcidSerialiseT t ~ BS.ByteString, MonadUnliftIO m, All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()
+writeCheckpoint :: forall t sFields m. (AcidSerialiseT t ~ BL.ByteString, MonadUnliftIO m, All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()
 writeCheckpoint s t np = do
   let cpFolder = (aWBConfigFSStateDir . aWBStateFSConfig $ s) <> "/checkpoint"
   Dir.createDirectoryIfMissing True cpFolder
   let acts =  cfoldMap_NP (Proxy :: Proxy (AcidSerialiseSegmentFieldConstraint t)) ((:[]) . writeSegment t cpFolder) np
   mapConcurrently_ id acts
 
-writeSegment :: forall t m fs. (AcidSerialiseT t ~ BS.ByteString, MonadIO m, AcidSerialiseSegmentFieldConstraint t fs) => AcidSerialiseEventOptions t -> FilePath -> V.ElField fs -> m ()
+writeSegment :: forall t m fs. (AcidSerialiseT t ~ BL.ByteString, MonadIO m, AcidSerialiseSegmentFieldConstraint t fs) => AcidSerialiseEventOptions t -> FilePath -> V.ElField fs -> m ()
 writeSegment t cpFolder ((V.Field seg)) = do
-  BS.writeFile (cpFolder <> "/" <> T.unpack (toUniqueText (Proxy :: Proxy (V.Fst fs)))) (serialiseSegment t seg)
+  BL.writeFile (cpFolder <> "/" <> T.unpack (toUniqueText (Proxy :: Proxy (V.Fst fs)))) (serialiseSegment t seg)
 
-readLastCheckpointState :: forall ss m t. (ValidSegmentsSerialise t ss,  MonadIO m, AcidSerialiseT t ~ BS.ByteString) => FilePath -> Proxy ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either Text (Maybe (SegmentsState ss)))
+readLastCheckpointState :: forall ss m t. (ValidSegmentsSerialise t ss,  MonadIO m, AcidSerialiseT t ~ BL.ByteString) => FilePath -> Proxy ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either Text (Maybe (SegmentsState ss)))
 readLastCheckpointState sPath _ _ t = (fmap . fmap) (Just . npToSegmentsState) segsNpE
 
   where
@@ -122,7 +124,7 @@ readLastCheckpointState sPath _ _ t = (fmap . fmap) (Just . npToSegmentsState) s
     readSegment :: forall sName. (AcidSerialiseSegmentNameConstraint t sName) => Proxy sName -> m (Either Text (SegmentS sName))
     readSegment ps = do
       let fPath = sPath <> "/" <> T.unpack (toUniqueText ps)
-      bs <- BS.readFile fPath
+      bs <- BL.readFile fPath
       pure $ deserialiseSegment t bs
 
     proxyNp :: NP Proxy (ToSegmentFields ss)

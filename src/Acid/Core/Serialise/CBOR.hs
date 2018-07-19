@@ -15,12 +15,13 @@ import qualified  RIO.List as L
 
 import Acid.Core.Serialise.Abstract
 import qualified  RIO.ByteString.Lazy as BL
+import qualified  Data.ByteString.Lazy.Internal as BL
 import qualified  RIO.ByteString as BS
 import qualified Codec.CBOR.Read as CBOR.Read
 import Codec.Serialise
 import Codec.Serialise.Encoding
 import Codec.Serialise.Decoding
-import Codec.CBOR.Write (toStrictByteString)
+import Codec.CBOR.Write (toLazyByteString)
 import Generics.SOP
 import Generics.SOP.NP
 import qualified Data.UUID  as UUID
@@ -38,9 +39,10 @@ data AcidSerialiserCBOR
 type CBOREventParser ss nn = (BS.ByteString -> Either Text (Maybe (BS.ByteString, WrappedEvent ss nn)))
 instance AcidSerialiseEvent AcidSerialiserCBOR where
   data AcidSerialiseEventOptions AcidSerialiserCBOR = AcidSerialiserCBOROptions
-  type AcidSerialiseT AcidSerialiserCBOR = BS.ByteString
   type AcidSerialiseParser AcidSerialiserCBOR ss nn = CBOREventParser ss nn
-  serialiseEvent o se = toStrictByteString $ serialiseCBOREvent o se
+  type AcidSerialiseT AcidSerialiserCBOR = BL.ByteString
+  type AcidSerialiseConduitT AcidSerialiserCBOR = BS.ByteString
+  serialiseEvent o se = toLazyByteString $ serialiseCBOREvent o se
   deserialiseEvent o bs = left (T.pack . show) $ decodeOrFail (deserialiseCBOREvent o) bs
   makeDeserialiseParsers _ _ _ = makeCBORParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserCBOR -> AcidSerialiseParsers AcidSerialiserCBOR ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
@@ -79,7 +81,7 @@ instance AcidSerialiseC AcidSerialiserCBOR where
   type AcidSerialiseConstraintAll AcidSerialiserCBOR ss nn = All (CanSerialiseCBOR ss) nn
 
 instance (Serialise seg) => AcidSerialiseSegment AcidSerialiserCBOR seg where
-  serialiseSegment _ seg = toStrictByteString $ encode seg
+  serialiseSegment _ seg = toLazyByteString $ encode seg
   deserialiseSegment _ bs = left (T.pack . show) $ decodeOrFail decode bs
 
 
@@ -117,13 +119,19 @@ decodePartial decoder t = (supplyCurrentInput =<< CBOR.Read.deserialiseIncrement
     handleEndOfCurrentInput (CBOR.Read.Partial _) = pure $ Right Nothing
     handleEndOfCurrentInput (CBOR.Read.Fail _ _ err) = pure $ Left (T.pack $ show err)
 
-decodeOrFail :: (forall s. Decoder s a) -> BS.ByteString -> Either CBOR.Read.DeserialiseFailure a
+
+
+decodeOrFail :: (forall s. Decoder s a) -> BL.ByteString -> Either CBOR.Read.DeserialiseFailure a
 decodeOrFail decoder bs0 =
     runST (supplyAllInput bs0 =<< CBOR.Read.deserialiseIncremental decoder)
   where
     supplyAllInput _bs (CBOR.Read.Done _ _ x) = return (Right x)
-    supplyAllInput  bs (CBOR.Read.Partial k)  = k (Just bs) >>= supplyAllInput BS.empty
+    supplyAllInput  bs (CBOR.Read.Partial k)  =
+      case bs of
+        BL.Chunk chunk bs' -> k (Just chunk) >>= supplyAllInput bs'
+        BL.Empty           -> k Nothing      >>= supplyAllInput BL.Empty
     supplyAllInput _ (CBOR.Read.Fail _ _ exn) = return (Left exn)
+
 
 decodeWrappedEventCBOR :: forall n ss nn. (CanSerialiseCBOR ss n) => Proxy n -> CBOREventParser ss nn
 decodeWrappedEventCBOR _ t = runST $ decodePartial doDeserialiseWrappedEvent t

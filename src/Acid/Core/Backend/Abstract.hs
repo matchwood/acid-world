@@ -16,6 +16,7 @@ class AcidWorldBackend (b :: k) where
   data AWBState b
   data AWBConfig b
   type AWBSerialiseT b :: *
+  type AWBSerialiseConduitT b :: *
   backendName :: Proxy b -> Text
   default backendName :: (Typeable b) => Proxy b -> Text
   backendName p = T.pack $ (showsTypeRep . typeRep $ p) ""
@@ -31,7 +32,7 @@ class AcidWorldBackend (b :: k) where
   getLastCheckpointState :: (MonadIO m, AcidSerialiseT t ~ AWBSerialiseT b, ValidSegmentsSerialise t ss ) => Proxy ss -> AWBState b -> AcidSerialiseEventOptions t -> m (Either Text (Maybe (SegmentsState ss)))
   getLastCheckpointState _ _ _ = pure . pure $ Nothing
   -- return events since the last checkpoint, if any
-  loadEvents :: (MonadIO m) => (ConduitT (AWBSerialiseT b) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->  AWBState b -> m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
+  loadEvents :: (MonadIO m) => (ConduitT (AWBSerialiseConduitT b) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->  AWBState b -> m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
   loadEvents _ _ = pure $ yieldMany []
   handleUpdateEvent :: (IsValidEvent ss nn n, MonadIO m, ValidAcidWorldState u ss) => (StorableEvent ss nn n -> AWBSerialiseT b) ->  (AWBState b) -> (AWState u ss) -> Event n -> m (EventResult n)
 

@@ -32,10 +32,11 @@ data AcidSerialiserJSON
 
 instance AcidSerialiseEvent AcidSerialiserJSON where
   data AcidSerialiseEventOptions AcidSerialiserJSON = AcidSerialiserJSONOptions
-  type AcidSerialiseT AcidSerialiserJSON = BS.ByteString
   type AcidSerialiseParser AcidSerialiserJSON ss nn = (Object -> Either Text (WrappedEvent ss nn))
-  serialiseEvent _ se = BL.toStrict $ (Aeson.encode se) <> "\n"
-  deserialiseEvent _ t = left (T.pack) $ (Aeson.eitherDecode' (BL.fromStrict t))
+  type AcidSerialiseT AcidSerialiserJSON = BL.ByteString
+  type AcidSerialiseConduitT AcidSerialiserJSON = BS.ByteString
+  serialiseEvent _ se = (Aeson.encode se) <> "\n"
+  deserialiseEvent _ t = left (T.pack) $ (Aeson.eitherDecode' t)
   makeDeserialiseParsers _ _ _ = makeJSONParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
   deserialiseEventStream  _ ps =
@@ -62,8 +63,8 @@ instance AcidSerialiseC AcidSerialiserJSON where
   type AcidSerialiseConstraintAll AcidSerialiserJSON ss nn = All (CanSerialiseJSON ss) nn
 
 instance (ToJSON seg, FromJSON seg) => AcidSerialiseSegment AcidSerialiserJSON seg where
-  serialiseSegment _ seg = BL.toStrict $ (Aeson.encode seg)
-  deserialiseSegment _ bs = left (T.pack) $ (Aeson.eitherDecode' (BL.fromStrict bs))
+  serialiseSegment _ seg = Aeson.encode seg
+  deserialiseSegment _ bs = left (T.pack) $ Aeson.eitherDecode' bs
 
 
 
