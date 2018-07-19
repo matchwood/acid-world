@@ -23,6 +23,7 @@ import Data.Typeable
 import qualified  Data.Vinyl.TypeLevel as V
 
 import Conduit
+import Control.Monad.ST.Trans
 
 
 {-
@@ -56,7 +57,7 @@ fromConduitType = snd . tConversions
 
 class AcidSerialiseSegment (t :: k) seg where
   serialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> seg -> ConduitT i (AcidSerialiseConduitT t) m ()
-  deserialiseSegment :: AcidSerialiseEventOptions t -> ConduitT (AcidSerialiseConduitT t) o m (Either Text seg)
+  deserialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> ConduitT (AcidSerialiseConduitT t) o (STT s m) (Either Text seg)
 
 
 class AcidSerialiseC t where

@@ -45,7 +45,8 @@ library
     cborg,
     safecopy,
     cereal,
-    zlib
+    zlib,
+    STMonadTrans
 
 
   hs-source-dirs:      src

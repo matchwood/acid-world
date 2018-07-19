@@ -25,6 +25,7 @@ import Acid.Core.Segment
 import Acid.Core.Backend.Abstract
 import Acid.Core.Serialise.Abstract
 import Conduit
+import Control.Monad.ST.Trans
 
 data AcidWorldBackendFS
 
@@ -126,8 +127,8 @@ readLastCheckpointState sPath _ _ t = (fmap . fmap) (Just . npToSegmentsState) s
     readSegmentFromProxy :: forall a b. (AcidSerialiseSegmentFieldConstraint t '(a, b), b ~ SegmentS a) => Proxy '(a, b) -> ((m :.: Either Text) :.: V.ElField) '(a, b)
     readSegmentFromProxy _ =  Comp $  fmap V.Field $  Comp $ readSegment (Proxy :: Proxy a)
     readSegment :: forall sName. (AcidSerialiseSegmentNameConstraint t sName) => Proxy sName -> m (Either Text (SegmentS sName))
-    readSegment ps = runConduitRes $
-      sourceFile (sPath <> "/" <> T.unpack (toUniqueText ps)) .|
+    readSegment ps = runResourceT $ runSTT $ runConduit $
+      transPipe lift (sourceFile (sPath <> "/" <> T.unpack (toUniqueText ps))) .|
       deserialiseSegment t
 
     proxyNp :: NP Proxy (ToSegmentFields ss)
