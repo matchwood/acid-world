@@ -18,16 +18,41 @@ import Generics.SOP.NP
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
 import Data.Aeson(FromJSON(..), ToJSON(..), Value(..), Object)
-
+import Data.Aeson.Internal (ifromJSON, IResult(..), formatError)
 import Acid.Core.Utils
 import Acid.Core.State
 import Acid.Core.Serialise.Abstract
 import Conduit
+import qualified Data.Attoparsec.ByteString as Atto
 
 {-
 implementation of a json serialiser
 -}
 data AcidSerialiserJSON
+
+
+eitherPartialDecode' :: (FromJSON a) => BS.ByteString -> JSONResult a
+eitherPartialDecode' = eitherPartialDecodeWith Aeson.json' ifromJSON
+
+eitherPartialDecodeWith :: Atto.Parser Value -> (Value -> IResult a) -> BS.ByteString
+                 -> JSONResult a
+eitherPartialDecodeWith p tra s =
+    case Atto.parse p s of
+      Atto.Done i v ->
+        case tra v of
+          ISuccess a      -> JSONResultDone (i, a)
+          IError path msg -> JSONResultFail (T.pack $ formatError path msg)
+      Atto.Fail _ _ msg -> JSONResultFail (T.pack msg)
+
+data JSONResult a =
+    JSONResultFail Text
+  | JSONResultPartial (BS.ByteString -> JSONResult a)
+  | JSONResultDone (BS.ByteString, a)
+
+handleJSONParserResult :: JSONResult a -> Either Text (Either (PartialParserBS a) (BS.ByteString, a))
+handleJSONParserResult (JSONResultFail err) = Left $ err
+handleJSONParserResult (JSONResultPartial p) = Right . Left $ (PartialParser $ \bs -> handleJSONParserResult $ p bs)
+handleJSONParserResult (JSONResultDone (bs, a)) = Right . Right $ (bs, a)
 
 
 instance AcidSerialiseEvent AcidSerialiserJSON where

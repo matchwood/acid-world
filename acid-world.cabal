@@ -46,7 +46,8 @@ library
     safecopy,
     cereal,
     zlib,
-    STMonadTrans
+    STMonadTrans,
+    attoparsec
 
 
   hs-source-dirs:      src
