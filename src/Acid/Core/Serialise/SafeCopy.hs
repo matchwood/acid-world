@@ -72,15 +72,8 @@ instance AcidSerialiseC AcidSerialiserSafeCopy where
 instance (SafeCopy seg) => AcidSerialiseSegment AcidSerialiserSafeCopy seg where
   serialiseSegment _ seg = sourceLazy $ runPutLazy $ safePut seg
   deserialiseSegment :: forall m o. (Monad m) => AcidSerialiseEventOptions AcidSerialiserSafeCopy -> ConduitT BS.ByteString o m (Either Text seg)
-  deserialiseSegment _ = await >>= loop safeCopyPartialParser
-    where
-      loop :: PartialParserBS seg -> Maybe BS.ByteString -> ConduitT BS.ByteString o m (Either Text seg)
-      loop _ Nothing = pure . Left $ "No values received in conduit when trying to parse segment"
-      loop p (Just t) = do
-        case runPartialParser p t of
-          Left err -> pure $ Left err
-          Right (Left newParser) -> await >>= loop newParser
-          Right (Right (_, seg)) -> pure $ Right seg
+  deserialiseSegment _ = deserialiseSegmentWithPartialParser safeCopyPartialParser
+
 
 
 

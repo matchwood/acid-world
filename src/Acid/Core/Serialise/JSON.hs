@@ -10,14 +10,14 @@ import qualified  RIO.ByteString.Lazy as BL
 import qualified  RIO.ByteString as BS
 import qualified  RIO.Vector as V
 
-import Control.Arrow (left)
+--import Control.Arrow (left)
 import Generics.SOP
 import Generics.SOP.NP
 
 
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
-import Data.Aeson(FromJSON(..), ToJSON(..), Value(..), Object)
+import Data.Aeson(FromJSON(..), ToJSON(..), Value(..))
 import Data.Aeson.Internal (ifromJSON, IResult(..), formatError)
 import Acid.Core.Utils
 import Acid.Core.State
@@ -34,15 +34,18 @@ data AcidSerialiserJSON
 eitherPartialDecode' :: (FromJSON a) => BS.ByteString -> JSONResult a
 eitherPartialDecode' = eitherPartialDecodeWith Aeson.json' ifromJSON
 
-eitherPartialDecodeWith :: Atto.Parser Value -> (Value -> IResult a) -> BS.ByteString
+eitherPartialDecodeWith :: forall a. Atto.Parser Value -> (Value -> IResult a) -> BS.ByteString
                  -> JSONResult a
-eitherPartialDecodeWith p tra s =
-    case Atto.parse p s of
-      Atto.Done i v ->
+eitherPartialDecodeWith p tra s = handleRes (Atto.parse p s)
+  where
+    handleRes :: Atto.IResult BS.ByteString Value -> JSONResult a
+    handleRes (Atto.Done i v) =
         case tra v of
           ISuccess a      -> JSONResultDone (i, a)
           IError path msg -> JSONResultFail (T.pack $ formatError path msg)
-      Atto.Fail _ _ msg -> JSONResultFail (T.pack msg)
+    handleRes (Atto.Partial np) = JSONResultPartial (handleRes . np)
+    handleRes (Atto.Fail _ _ msg) = JSONResultFail (T.pack msg)
+
 
 data JSONResult a =
     JSONResultFail Text
@@ -57,27 +60,28 @@ handleJSONParserResult (JSONResultDone (bs, a)) = Right . Right $ (bs, a)
 
 instance AcidSerialiseEvent AcidSerialiserJSON where
   data AcidSerialiseEventOptions AcidSerialiserJSON = AcidSerialiserJSONOptions
-  type AcidSerialiseParser AcidSerialiserJSON ss nn = (Object -> Either Text (WrappedEvent ss nn))
+  type AcidSerialiseParser AcidSerialiserJSON ss nn = PartialParserBS (WrappedEvent ss nn)
   type AcidSerialiseT AcidSerialiserJSON = BL.ByteString
   type AcidSerialiseConduitT AcidSerialiserJSON = BS.ByteString
-  serialiseEvent _ se = (Aeson.encode se) <> "\n"
-  deserialiseEvent _ t = left (T.pack) $ (Aeson.eitherDecode' t)
+  serialiseEvent :: forall ss nn n.(AcidSerialiseConstraint AcidSerialiserJSON ss n) => AcidSerialiseEventOptions AcidSerialiserJSON -> StorableEvent ss nn n -> BL.ByteString
+  serialiseEvent _ se = Aeson.encode (toUniqueText (Proxy :: Proxy n)) <> (Aeson.encode se)
+  deserialiseEvent _ t = consumeAndRunPartialParser (jsonPartialParser :: PartialParserBS Text) jsonPartialParser (BL.toStrict t)
   makeDeserialiseParsers _ _ _ = makeJSONParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
-  deserialiseEventStream  _ ps =
-        linesUnboundedAsciiC .|
-          mapC deserialiser
-    where
-      deserialiser :: BS.ByteString -> Either Text (WrappedEvent ss nn )
-      deserialiser bs = do
-        (hm :: HM.HashMap Text Value) <- left (T.pack) $ Aeson.eitherDecode' (BL.fromStrict bs)
-        case HM.lookup "n" hm of
-          Just (String s) -> do
-            case HM.lookup s ps of
-              Nothing -> fail $ "Could not find parser for event named " <> show s
-              Just p -> p hm
-          _ -> fail $ "Expected to find a text n key in value " <> show hm
+  deserialiseEventStream  _ ps = deserialiseEventStreamWithPartialParser (findJSONParserForWrappedEvent ps)
 
+
+jsonPartialParser :: (FromJSON a) => PartialParserBS a
+jsonPartialParser = PartialParser $ \t -> handleJSONParserResult $ eitherPartialDecode' t
+
+findJSONParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserJSON ss nn -> PartialParserBS ( PartialParserBS (WrappedEvent ss nn))
+findJSONParserForWrappedEvent ps = fmapPartialParser findJSONParser jsonPartialParser
+  where
+    findJSONParser :: Text -> Either Text (PartialParserBS (WrappedEvent ss nn))
+    findJSONParser n = do
+      case HM.lookup n ps of
+        Just p -> pure p
+        Nothing -> Left $ "Could not find parser for event named " <> n
 
 
 class (ValidEventName ss n, All FromJSON (EventArgs n), All ToJSON (EventArgs n)) => CanSerialiseJSON ss n
@@ -89,7 +93,7 @@ instance AcidSerialiseC AcidSerialiserJSON where
 
 instance (ToJSON seg, FromJSON seg) => AcidSerialiseSegment AcidSerialiserJSON seg where
   serialiseSegment _ seg = sourceLazy $ Aeson.encode seg
-  deserialiseSegment _  = undefined --left (T.pack) $ Aeson.eitherDecode' bs
+  deserialiseSegment _ = deserialiseSegmentWithPartialParser jsonPartialParser
 
 
 
@@ -100,13 +104,12 @@ makeJSONParsers =
   where
     proxyRec :: NP Proxy nn
     proxyRec = pure_NP Proxy
-    toTaggedTuple :: (CanSerialiseJSON ss n) => Proxy n -> (Text, Object -> Either Text (WrappedEvent ss nn))
+    toTaggedTuple :: (CanSerialiseJSON ss n) => Proxy n -> (Text, PartialParserBS (WrappedEvent ss nn))
     toTaggedTuple p = (toUniqueText p, decodeWrappedEventJSON p)
 
-decodeWrappedEventJSON :: forall n ss nn. (CanSerialiseJSON ss n) => Proxy n -> Object -> Either Text (WrappedEvent ss nn)
-decodeWrappedEventJSON _ hm = do
-  (se :: (StorableEvent ss nn n))  <- fromJSONEither (Object hm)
-  pure $ WrappedEvent se
+decodeWrappedEventJSON :: forall n ss nn. (CanSerialiseJSON ss n) => Proxy n -> PartialParserBS (WrappedEvent ss nn)
+decodeWrappedEventJSON _ = fmapPartialParser (pure . (WrappedEvent :: StorableEvent ss nn n -> WrappedEvent ss nn)) jsonPartialParser
+
 
 fromJSONEither :: FromJSON a => Value -> Either Text a
 fromJSONEither v =
@@ -118,7 +121,6 @@ fromJSONEither v =
 
 instance (All ToJSON (EventArgs n)) => ToJSON (StorableEvent ss nn n) where
   toJSON (StorableEvent t ui (Event xs :: Event n)) = Object $ HM.fromList [
-    ("n", toJSON (toUniqueText (Proxy :: Proxy n))),
     ("t", toJSON t),
     ("i", toJSON ui),
     ("a", toJSON xs)]
