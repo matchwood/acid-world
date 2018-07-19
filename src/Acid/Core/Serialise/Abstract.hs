@@ -55,8 +55,8 @@ fromConduitType :: (AcidSerialiseEvent t) => AcidSerialiseEventOptions t -> Acid
 fromConduitType = snd . tConversions
 
 class AcidSerialiseSegment (t :: k) seg where
-  serialiseSegment :: AcidSerialiseEventOptions t -> seg -> AcidSerialiseT t
-  deserialiseSegment :: AcidSerialiseEventOptions t -> AcidSerialiseT t -> Either Text seg
+  serialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> seg -> ConduitT i (AcidSerialiseConduitT t) m ()
+  deserialiseSegment :: AcidSerialiseEventOptions t -> ConduitT (AcidSerialiseConduitT t) o m (Either Text seg)
 
 
 class AcidSerialiseC t where
@@ -83,6 +83,44 @@ type ValidSegmentsSerialise t ss = (All (AcidSerialiseSegmentFieldConstraint t) 
 
 type AcidSerialiseParsers t ss nn = HM.HashMap Text (AcidSerialiseParser t ss nn)
 
+newtype PartialParser s a = PartialParser {extractPartialParser :: (s -> Either Text (Either (PartialParser s a) (s, a)))}
+
+runPartialParser :: PartialParser s a -> s ->  Either Text (Either (PartialParser s a) (s, a))
+runPartialParser = extractPartialParser
+
+type PartialParserBS a = PartialParser BS.ByteString a
+
+fmapPartialParser :: (a -> Either Text b) -> PartialParser s a -> PartialParser s b
+fmapPartialParser f p = PartialParser $ \t -> do
+  res <- (extractPartialParser p) t
+  case res of
+    (Left newP) -> pure (Left $ fmapPartialParser f newP)
+    (Right (s, a)) -> do
+      b <- f a
+      pure $ Right (s, b)
+
+deserialiseEventStreamWithPartialParser :: forall ss nn m. (Monad m) => PartialParserBS (PartialParserBS (WrappedEvent ss nn)) -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
+deserialiseEventStreamWithPartialParser initialParser = awaitForever (loop (Left initialParser))
+  where
+    loop :: (Either (PartialParserBS (PartialParserBS (WrappedEvent ss nn))) (PartialParserBS (WrappedEvent ss nn))) -> BS.ByteString ->  ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ()
+    loop (Left p) t = do
+      case runPartialParser p t of
+        Left err -> yield (Left err) >> awaitForever (loop (Left p))
+        Right (Left newParser) -> do
+          mt <- await
+          case mt of
+            Nothing -> yield $  Left $ "Unexpected end of conduit values when still looking for parser"
+            Just nt -> loop (Left newParser) nt
+        Right (Right (bs, foundP)) -> (loop (Right foundP) bs)
+    loop (Right p) t =
+      case runPartialParser p t of
+        Left err -> yield (Left err) >> awaitForever (loop (Left initialParser))
+        Right (Left newParser) -> do
+          mt <- await
+          case mt of
+            Nothing -> yield $  Left $ "Unexpected end of conduit values when named event has only been partially parsed"
+            Just nt -> loop (Right newParser) nt
+        Right (Right (bs, e)) -> yield (Right e) >> (if BS.null bs then  awaitForever (loop (Left initialParser)) else loop (Left initialParser) bs)
 
 deserialiseWrappedEvent :: forall t ss (nn :: [Symbol]). (AcidSerialiseEvent t, ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> Either Text (WrappedEvent ss nn)
 deserialiseWrappedEvent o s = deserialiseWrappedEventWithParsers o (makeDeserialiseParsers o (Proxy :: Proxy ss) (Proxy :: Proxy nn)) (toConduitType o s)

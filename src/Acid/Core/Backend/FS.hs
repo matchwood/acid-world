@@ -100,18 +100,22 @@ instance AcidWorldBackend AcidWorldBackendFS where
     runUpdate awu e
 
 
-writeCheckpoint :: forall t sFields m. (AcidSerialiseT t ~ BL.ByteString, MonadUnliftIO m, All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()
+writeCheckpoint :: forall t sFields m. (AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()
 writeCheckpoint s t np = do
   let cpFolder = (aWBConfigFSStateDir . aWBStateFSConfig $ s) <> "/checkpoint"
   Dir.createDirectoryIfMissing True cpFolder
   let acts =  cfoldMap_NP (Proxy :: Proxy (AcidSerialiseSegmentFieldConstraint t)) ((:[]) . writeSegment t cpFolder) np
   mapConcurrently_ id acts
 
-writeSegment :: forall t m fs. (AcidSerialiseT t ~ BL.ByteString, MonadIO m, AcidSerialiseSegmentFieldConstraint t fs) => AcidSerialiseEventOptions t -> FilePath -> V.ElField fs -> m ()
-writeSegment t cpFolder ((V.Field seg)) = do
-  BL.writeFile (cpFolder <> "/" <> T.unpack (toUniqueText (Proxy :: Proxy (V.Fst fs)))) (serialiseSegment t seg)
+writeSegment :: forall t m fs. (AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, AcidSerialiseSegmentFieldConstraint t fs) => AcidSerialiseEventOptions t -> FilePath -> V.ElField fs -> m ()
+writeSegment t cpFolder ((V.Field seg)) = runConduitRes $
+  serialiseSegment t seg .|
+  sinkFileCautious (cpFolder <> "/" <> T.unpack (toUniqueText (Proxy :: Proxy (V.Fst fs))))
 
-readLastCheckpointState :: forall ss m t. (ValidSegmentsSerialise t ss,  MonadIO m, AcidSerialiseT t ~ BL.ByteString) => FilePath -> Proxy ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either Text (Maybe (SegmentsState ss)))
+
+
+
+readLastCheckpointState :: forall ss m t. (ValidSegmentsSerialise t ss,  MonadUnliftIO m, AcidSerialiseConduitT t ~ BS.ByteString) => FilePath -> Proxy ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either Text (Maybe (SegmentsState ss)))
 readLastCheckpointState sPath _ _ t = (fmap . fmap) (Just . npToSegmentsState) segsNpE
 
   where
@@ -122,10 +126,9 @@ readLastCheckpointState sPath _ _ t = (fmap . fmap) (Just . npToSegmentsState) s
     readSegmentFromProxy :: forall a b. (AcidSerialiseSegmentFieldConstraint t '(a, b), b ~ SegmentS a) => Proxy '(a, b) -> ((m :.: Either Text) :.: V.ElField) '(a, b)
     readSegmentFromProxy _ =  Comp $  fmap V.Field $  Comp $ readSegment (Proxy :: Proxy a)
     readSegment :: forall sName. (AcidSerialiseSegmentNameConstraint t sName) => Proxy sName -> m (Either Text (SegmentS sName))
-    readSegment ps = do
-      let fPath = sPath <> "/" <> T.unpack (toUniqueText ps)
-      bs <- BL.readFile fPath
-      pure $ deserialiseSegment t bs
+    readSegment ps = runConduitRes $
+      sourceFile (sPath <> "/" <> T.unpack (toUniqueText ps)) .|
+      deserialiseSegment t
 
     proxyNp :: NP Proxy (ToSegmentFields ss)
     proxyNp = pure_NP Proxy

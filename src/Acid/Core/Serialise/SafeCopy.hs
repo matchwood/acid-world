@@ -28,53 +28,38 @@ implementation of a json serialiser
 -}
 data AcidSerialiserSafeCopy
 
-type SafeCopyEventParser ss nn = (BS.ByteString -> Either Text (Maybe (BS.ByteString, WrappedEvent ss nn)))
+
 
 instance AcidSerialiseEvent AcidSerialiserSafeCopy where
   data AcidSerialiseEventOptions AcidSerialiserSafeCopy = AcidSerialiserSafeCopyOptions
-  type AcidSerialiseParser AcidSerialiserSafeCopy ss nn = SafeCopyEventParser ss nn
+  type AcidSerialiseParser AcidSerialiserSafeCopy ss nn = PartialParserBS (WrappedEvent ss nn)
   type AcidSerialiseT AcidSerialiserSafeCopy = BL.ByteString
   type AcidSerialiseConduitT AcidSerialiserSafeCopy = BS.ByteString
   serialiseEvent o se = runPutLazy $ serialiseSafeCopyEvent o se
   deserialiseEvent o t = left (T.pack) $ runGetLazy (deserialiseSafeCopyEvent o) t
   makeDeserialiseParsers _ _ _ = makeSafeCopyParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserSafeCopy -> AcidSerialiseParsers AcidSerialiserSafeCopy ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
-  deserialiseEventStream  _ ps = awaitForever (loop Nothing)
-    where
-      loop :: (Maybe (SafeCopyEventParser ss nn)) -> BS.ByteString ->  ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ()
-      loop Nothing t = do
-        case findSafeCopyParserForWrappedEvent ps t of
-          Left err -> yield (Left err) >> awaitForever (loop Nothing)
-          Right Nothing -> do
-            mt <- await
-            case mt of
-              Nothing -> yield $  Left $ "Unexpected end of conduit values when still looking for parser"
-              Just nt -> loop Nothing (t <> nt)
-          Right (Just (bs, p)) -> (loop (Just p) bs)
-      loop (Just p) t =
-        case p t of
-          Left err -> yield (Left err) >> awaitForever (loop Nothing)
-          Right Nothing -> do
-            mt <- await
-            case mt of
-              Nothing -> yield $  Left $ "Unexpected end of conduit values when named event has only been partially parsed"
-              Just nt -> loop (Just p) (t <> nt)
-          Right (Just (bs, e)) -> yield (Right e) >> (if BS.null bs then  awaitForever (loop Nothing) else loop Nothing bs)
+  deserialiseEventStream  _ ps = deserialiseEventStreamWithPartialParser (findSafeCopyParserForWrappedEvent ps)
 
 
-findSafeCopyParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserSafeCopy ss nn -> BS.ByteString -> Either Text (Maybe (BS.ByteString, SafeCopyEventParser ss nn))
-findSafeCopyParserForWrappedEvent ps t =
-  case runGetPartial safeGet t of
-    Fail err _ -> Left . T.pack $ err
-    Partial _ -> Right Nothing
-    Done n bs -> do
+safeCopyPartialParser :: (SafeCopy a) => PartialParserBS a
+safeCopyPartialParser = PartialParser $ \t -> handleSafeCopyParserResult $ runGetPartial safeGet t
+
+findSafeCopyParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserSafeCopy ss nn -> PartialParserBS ( PartialParserBS (WrappedEvent ss nn))
+findSafeCopyParserForWrappedEvent ps = fmapPartialParser findSafeCopyParser safeCopyPartialParser
+  where
+    findSafeCopyParser :: BS.ByteString -> Either Text (PartialParserBS (WrappedEvent ss nn))
+    findSafeCopyParser n = do
       let eName = (T.decodeUtf8' n)
       case eName of
         Left err -> Left $ "Could not decode event name" <> T.pack (show err)
         Right name ->
           case HM.lookup name ps of
-            Just p -> Right (Just (bs, p))
+            Just p -> pure p
             Nothing -> Left $ "Could not find parser for event named " <> name
+
+
+
 
 
 class (ValidEventName ss n, All SafeCopy (EventArgs n)) => CanSerialiseSafeCopy ss n
@@ -85,8 +70,8 @@ instance AcidSerialiseC AcidSerialiserSafeCopy where
   type AcidSerialiseConstraintAll AcidSerialiserSafeCopy ss nn = All (CanSerialiseSafeCopy ss) nn
 
 instance (SafeCopy seg) => AcidSerialiseSegment AcidSerialiserSafeCopy seg where
-  serialiseSegment _ seg = runPutLazy $ safePut seg
-  deserialiseSegment _ bs = left (T.pack) $ runGetLazy safeGet bs
+  serialiseSegment _ seg = sourceLazy $ runPutLazy $ safePut seg
+  deserialiseSegment _ = undefined --left (T.pack) $ runGetLazy safeGet bs
 
 
 makeSafeCopyParsers :: forall ss nn. (All (CanSerialiseSafeCopy ss) nn) => AcidSerialiseParsers AcidSerialiserSafeCopy ss nn
@@ -96,15 +81,19 @@ makeSafeCopyParsers =
   where
     proxyRec :: NP Proxy nn
     proxyRec = pure_NP Proxy
-    toTaggedTuple :: (CanSerialiseSafeCopy ss n) => Proxy n -> (Text, SafeCopyEventParser ss nn)
+    toTaggedTuple :: (CanSerialiseSafeCopy ss n) => Proxy n -> (Text, PartialParserBS (WrappedEvent ss nn))
     toTaggedTuple p = (toUniqueText p, decodeWrappedEventSafeCopy p)
 
-decodeWrappedEventSafeCopy :: forall n ss nn. (CanSerialiseSafeCopy ss n) => Proxy n -> SafeCopyEventParser ss nn
-decodeWrappedEventSafeCopy _ t =
-  case runGetPartial safeGet t of
-    Fail err _ -> Left . T.pack $ err
-    Partial _ -> Right Nothing
-    Done (se :: StorableEvent ss nn n) bs -> Right (Just (bs, WrappedEvent se))
+decodeWrappedEventSafeCopy :: forall n ss nn. (CanSerialiseSafeCopy ss n) => Proxy n -> PartialParserBS (WrappedEvent ss nn)
+decodeWrappedEventSafeCopy _ = fmapPartialParser (pure . (WrappedEvent :: StorableEvent ss nn n -> WrappedEvent ss nn)) safeCopyPartialParser
+
+
+
+
+handleSafeCopyParserResult :: Result a -> Either Text (Either (PartialParserBS a) (BS.ByteString, a))
+handleSafeCopyParserResult (Fail err _) = Left . T.pack $ err
+handleSafeCopyParserResult (Partial p) = Right . Left $ (PartialParser $ \bs -> handleSafeCopyParserResult $ p bs)
+handleSafeCopyParserResult (Done a bs) = Right . Right $ (bs, a)
 
 
 serialiseSafeCopyEvent :: forall ss nn n. (CanSerialiseSafeCopy ss n) => AcidSerialiseEventOptions AcidSerialiserSafeCopy -> StorableEvent ss nn n -> Put

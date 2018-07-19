@@ -63,8 +63,8 @@ instance AcidSerialiseC AcidSerialiserJSON where
   type AcidSerialiseConstraintAll AcidSerialiserJSON ss nn = All (CanSerialiseJSON ss) nn
 
 instance (ToJSON seg, FromJSON seg) => AcidSerialiseSegment AcidSerialiserJSON seg where
-  serialiseSegment _ seg = Aeson.encode seg
-  deserialiseSegment _ bs = left (T.pack) $ Aeson.eitherDecode' bs
+  serialiseSegment _ seg = sourceLazy $ Aeson.encode seg
+  deserialiseSegment _  = undefined --left (T.pack) $ Aeson.eitherDecode' bs
 
 
 

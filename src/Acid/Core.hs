@@ -33,7 +33,7 @@ data AcidWorld  ss nn t where
 
 
 openAcidWorld :: forall m ss nn b uMonad t.
-               ( MonadIO m
+               ( MonadUnliftIO m
                , AcidWorldBackend b
                , ValidAcidWorldState uMonad ss
                , AcidSerialiseEvent t
@@ -65,7 +65,7 @@ closeAcidWorld (AcidWorld {..}) = do
   closeBackend acidWorldBackendState
   closeState acidWorldState
 
-reopenAcidWorld :: (MonadIO m) => AcidWorld ss nn t -> m (Either Text (AcidWorld ss nn t))
+reopenAcidWorld :: (MonadUnliftIO m) => AcidWorld ss nn t -> m (Either Text (AcidWorld ss nn t))
 reopenAcidWorld (AcidWorld {..}) = do
   openAcidWorld Nothing (acidWorldBackendConfig) (acidWorldStateConfig) acidWorldSerialiserOptions
 

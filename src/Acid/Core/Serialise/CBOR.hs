@@ -35,7 +35,6 @@ import Acid.Core.State
 data AcidSerialiserCBOR
 
 
-
 type CBOREventParser ss nn = (BS.ByteString -> Either Text (Maybe (BS.ByteString, WrappedEvent ss nn)))
 instance AcidSerialiseEvent AcidSerialiserCBOR where
   data AcidSerialiseEventOptions AcidSerialiserCBOR = AcidSerialiserCBOROptions
@@ -81,8 +80,8 @@ instance AcidSerialiseC AcidSerialiserCBOR where
   type AcidSerialiseConstraintAll AcidSerialiserCBOR ss nn = All (CanSerialiseCBOR ss) nn
 
 instance (Serialise seg) => AcidSerialiseSegment AcidSerialiserCBOR seg where
-  serialiseSegment _ seg = toLazyByteString $ encode seg
-  deserialiseSegment _ bs = left (T.pack . show) $ decodeOrFail decode bs
+  serialiseSegment _ seg = sourceLazy $ toLazyByteString $ encode seg
+  deserialiseSegment _ = undefined-- left (T.pack . show) $ decodeOrFail decode bs
 
 
 findCBORParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserCBOR ss nn -> BS.ByteString -> Either Text (Maybe (BS.ByteString, CBOREventParser ss nn))
