@@ -24,6 +24,7 @@ import Acid.Core.State
 import Acid.Core.Serialise.Abstract
 import Conduit
 import qualified Data.Attoparsec.ByteString as Atto
+import qualified Data.Attoparsec.ByteString.Lazy as Atto.L
 
 {-
 implementation of a json serialiser
@@ -31,6 +32,7 @@ implementation of a json serialiser
 data AcidSerialiserJSON
 
 
+{- Partial decoding for json -}
 eitherPartialDecode' :: (FromJSON a) => BS.ByteString -> JSONResult a
 eitherPartialDecode' = eitherPartialDecodeWith Aeson.json' ifromJSON
 
@@ -46,16 +48,35 @@ eitherPartialDecodeWith p tra s = handleRes (Atto.parse p s)
     handleRes (Atto.Partial np) = JSONResultPartial (handleRes . np)
     handleRes (Atto.Fail _ _ msg) = JSONResultFail (T.pack msg)
 
-
 data JSONResult a =
     JSONResultFail Text
   | JSONResultPartial (BS.ByteString -> JSONResult a)
   | JSONResultDone (BS.ByteString, a)
 
+
 handleJSONParserResult :: JSONResult a -> Either Text (Either (PartialParserBS a) (BS.ByteString, a))
 handleJSONParserResult (JSONResultFail err) = Left $ err
 handleJSONParserResult (JSONResultPartial p) = Right . Left $ (PartialParser $ \bs -> handleJSONParserResult $ p bs)
 handleJSONParserResult (JSONResultDone (bs, a)) = Right . Right $ (bs, a)
+
+
+{- Decoding with remainder - needed because of how we serialise event names -}
+eitherDecodeLeftover :: (FromJSON a) => BL.ByteString -> Either Text (BL.ByteString, a)
+eitherDecodeLeftover = eitherDecodeLeftoverWith Aeson.json' ifromJSON
+
+eitherDecodeLeftoverWith :: Atto.L.Parser Value -> (Value -> IResult a) -> BL.ByteString
+                 -> Either Text (BL.ByteString, a)
+eitherDecodeLeftoverWith p tra s =
+    case Atto.L.parse p s of
+      Atto.L.Done bs v     -> case tra v of
+                          ISuccess a      -> pure (bs, a)
+                          IError path msg -> Left (T.pack $ formatError path msg)
+      Atto.L.Fail _ _ msg -> Left (T.pack msg)
+
+consumeAndParse :: forall a b. (FromJSON a, FromJSON b) => Proxy a -> BL.ByteString -> Either Text b
+consumeAndParse _ bs = do
+  (bs', (_ :: a)) <- eitherDecodeLeftover bs
+  fmap snd $ eitherDecodeLeftover bs'
 
 
 instance AcidSerialiseEvent AcidSerialiserJSON where
@@ -66,7 +87,7 @@ instance AcidSerialiseEvent AcidSerialiserJSON where
   -- due to the constraints of json (single top level object) we have a choice between some kind of separation between events (newline) or to simply write out the event name followed by the event. we choose the latter because it should be more efficient from a parsing perspective, and it allows a common interface with other parsers (SafeCopy)
   serialiseEvent :: forall ss nn n.(AcidSerialiseConstraint AcidSerialiserJSON ss n) => AcidSerialiseEventOptions AcidSerialiserJSON -> StorableEvent ss nn n -> BL.ByteString
   serialiseEvent _ se = Aeson.encode (toUniqueText (Proxy :: Proxy n)) <> (Aeson.encode se)
-  deserialiseEvent _ t = consumeAndRunPartialParser (jsonPartialParser :: PartialParserBS Text) jsonPartialParser (BL.toStrict t)
+  deserialiseEvent _ = consumeAndParse (Proxy :: Proxy Text)
   makeDeserialiseParsers _ _ _ = makeJSONParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
   deserialiseEventStream  _ ps = deserialiseEventStreamWithPartialParser (findJSONParserForWrappedEvent ps)

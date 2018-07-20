@@ -148,7 +148,9 @@ deserialiseSegmentWithPartialParser origParser = await >>= loop origParser
           Right (Left newParser) -> await >>= loop newParser
           Right (Right (_, seg)) -> pure $ Right seg
 
-
+{-
+this is a helper function for deserialising a single wrapped event - at the moment it is really just used for testing serialisation
+-}
 deserialiseWrappedEvent :: forall t ss (nn :: [Symbol]). (AcidSerialiseEvent t, ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> Either Text (WrappedEvent ss nn)
 deserialiseWrappedEvent o s = deserialiseWrappedEventWithParsers o (makeDeserialiseParsers o (Proxy :: Proxy ss) (Proxy :: Proxy nn)) (toConduitType o s)
 
