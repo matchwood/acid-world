@@ -20,10 +20,12 @@ import qualified Test.QuickCheck.Property as QCP
 
 
 
+
+
 withBackends :: (AppValidBackend -> AppValidSerialiser -> [TestTree]) -> [(AppValidBackend, [AppValidSerialiser])] -> [TestTree]
 withBackends f os =
-  (flip map) os $ \(b@(AppValidBackend (_ :: IO (AWBConfig b))), ss) ->
-     testGroup ("Backend: " <> (T.unpack . backendName $ (Proxy :: Proxy b))) $
+  (flip map) os $ \(b@(AppValidBackend (bc :: (FilePath -> AWBConfig b))), ss) ->
+     testGroup ("Backend: " <> (T.unpack . backendName $ (Proxy :: Proxy b)) <> ", " <> T.unpack (backendConfigInfo (bc "*TMPDIR*"))) $
        (flip map) ss $ \(o@(AppValidSerialiser (_ :: AcidSerialiseEventOptions s))) ->
          testGroup ("Serialiser: " <> (T.unpack . serialiserName $ (Proxy :: Proxy s))) $
            f b o
@@ -50,13 +52,13 @@ serialiserTests (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) =
     ]
 
 ephemeralBackendTests :: AppValidBackend -> AppValidSerialiser -> [TestTree]
-ephemeralBackendTests (AppValidBackend (bConf :: IO (AWBConfig b))) (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = [
+ephemeralBackendTests (AppValidBackend (bConf :: FilePath -> (AWBConfig b))) (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = [
     testCaseSteps "insertAndFetchState" $ unit_insertAndFetchState bConf o
   ]
 
 
 persistentBackendTests :: AppValidBackend -> AppValidSerialiser -> [TestTree]
-persistentBackendTests (AppValidBackend (bConf :: IO (AWBConfig b))) (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = [
+persistentBackendTests (AppValidBackend (bConf :: FilePath -> (AWBConfig b))) (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = [
     testCaseSteps "insertAndRestoreState" $ unit_insertAndRestoreState bConf o,
     testCaseSteps "checkpointAndRestoreState" $ unit_checkpointAndRestoreState bConf o
   ]
@@ -90,7 +92,7 @@ prop_serialiseWrappedEventEqualDeserialise o = forAll genStorableEvent $ \e ->
 
 
 
-unit_insertAndFetchState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => IO (AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
+unit_insertAndFetchState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => (FilePath -> AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
 unit_insertAndFetchState b o step = do
   us <- QC.generate $ generateUsers 100
   step "Opening acid world"
@@ -102,7 +104,7 @@ unit_insertAndFetchState b o step = do
   assertBool "Fetched user list did not match inserted users" (us == us2)
 
 
-unit_insertAndRestoreState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => IO (AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
+unit_insertAndRestoreState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => (FilePath -> AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
 unit_insertAndRestoreState b o step = do
   allUs <- QC.generate $ generateUsers 2000
   let (us, us2) = L.splitAt 1000 allUs
@@ -126,7 +128,7 @@ unit_insertAndRestoreState b o step = do
 
   assertBool "Fetched user list did not match inserted users" (L.sort (us ++ us2) == L.sort us3)
 
-unit_checkpointAndRestoreState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => IO (AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
+unit_checkpointAndRestoreState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => (FilePath -> AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
 unit_checkpointAndRestoreState b o step = do
   us <- QC.generate $ generateUsers 1000
   as <- QC.generate $ generateAddresses 1000

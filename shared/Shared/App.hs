@@ -52,20 +52,21 @@ allSerialisers = [
 
 
 persistentBackends :: [AppValidBackend]
-persistentBackends = [AppValidBackend $ AWBConfigFS <$> mkTempDir <*> pure True]
+persistentBackends = [
+      AppValidBackend $ \t -> AWBConfigFS t False
+    , AppValidBackend $ \t -> AWBConfigFS t True
+    ]
 
 ephemeralBackends :: [AppValidBackend]
-ephemeralBackends = [AppValidBackend $ pure AWBConfigMemory]
+ephemeralBackends = [AppValidBackend $ const AWBConfigMemory]
 
-allBackends :: [AppValidBackend]
+allBackends ::  [AppValidBackend]
 allBackends = persistentBackends ++ ephemeralBackends
-
-
 
 data AppValidSerialiser where
   AppValidSerialiser :: (AppValidSerialiserConstraint s) => AcidSerialiseEventOptions s -> AppValidSerialiser
 data AppValidBackend where
-  AppValidBackend :: (AppValidBackendConstraint b) => IO (AWBConfig b) -> AppValidBackend
+  AppValidBackend :: (AppValidBackendConstraint b) => (FilePath -> (AWBConfig b)) -> AppValidBackend
 
 
 topLevelTestDir :: FilePath
@@ -107,15 +108,16 @@ openAppAcidWorldRestoreState opts s = do
   putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
   pure aw
 
-openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AWBSerialiseT b ~ BL.ByteString, AcidSerialiseConduitT s ~ BS.ByteString, AWBSerialiseConduitT b ~ BS.ByteString, AcidWorldBackend b,  AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => IO (AWBConfig b) -> (AcidSerialiseEventOptions s) -> IO (AppAW s)
-openAppAcidWorldFresh bConfIO opts = do
-  bConf <- bConfIO
+openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AWBSerialiseT b ~ BL.ByteString, AcidSerialiseConduitT s ~ BS.ByteString, AWBSerialiseConduitT b ~ BS.ByteString, AcidWorldBackend b,  AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => (FilePath -> AWBConfig b) -> (AcidSerialiseEventOptions s) -> IO (AppAW s)
+openAppAcidWorldFresh bConf opts = do
+  td <- mkTempDir
+  throwEither $ openAcidWorld Nothing (bConf td) AWConfigPureState opts
 
-  throwEither $ openAcidWorld Nothing bConf AWConfigPureState opts
 
-
-openAppAcidWorldFreshFS :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseConduitT s ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => (AcidSerialiseEventOptions s) -> IO (AppAW s)
-openAppAcidWorldFreshFS opts = openAppAcidWorldFresh (AWBConfigFS <$> mkTempDir <*> pure True) opts
+type UseGzip = Bool
+openAppAcidWorldFreshFS :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseConduitT s ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => (AcidSerialiseEventOptions s) -> UseGzip -> IO (AppAW s)
+openAppAcidWorldFreshFS opts useGzip = do
+  openAppAcidWorldFresh (\td -> AWBConfigFS td useGzip) opts
 
 closeAndReopen :: Middleware s
 closeAndReopen = reopenAcidWorldMiddleware . closeAcidWorldMiddleware

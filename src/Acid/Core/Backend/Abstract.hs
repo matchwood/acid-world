@@ -9,6 +9,7 @@ import Data.Typeable
 import Data.Proxy(Proxy(..))
 import Acid.Core.Segment
 import Acid.Core.State
+import Acid.Core.Utils
 import Conduit
 import Acid.Core.Serialise.Abstract
 
@@ -20,6 +21,9 @@ class AcidWorldBackend (b :: k) where
   backendName :: Proxy b -> Text
   default backendName :: (Typeable b) => Proxy b -> Text
   backendName p = T.pack $ (showsTypeRep . typeRep $ p) ""
+  backendConfigInfo :: AWBConfig b -> Text
+  default backendConfigInfo :: (Show (AWBConfig b)) => AWBConfig b -> Text
+  backendConfigInfo = showT
   initialiseBackend :: (MonadIO m) => Proxy ss -> AWBConfig b -> (SegmentsState ss) -> m (Either Text (AWBState b))
   closeBackend :: (MonadIO m) => AWBState b -> m ()
   closeBackend _ = pure ()

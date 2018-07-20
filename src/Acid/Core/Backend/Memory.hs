@@ -19,7 +19,7 @@ data AcidWorldBackendMemory
 
 instance AcidWorldBackend AcidWorldBackendMemory where
   data AWBState AcidWorldBackendMemory = AWBStateMemory
-  data AWBConfig AcidWorldBackendMemory = AWBConfigMemory
+  data AWBConfig AcidWorldBackendMemory = AWBConfigMemory deriving Show
   type AWBSerialiseT AcidWorldBackendMemory = BL.ByteString
   type AWBSerialiseConduitT AcidWorldBackendMemory = BS.ByteString
   initialiseBackend _ _ _  = pure . pure $ AWBStateMemory

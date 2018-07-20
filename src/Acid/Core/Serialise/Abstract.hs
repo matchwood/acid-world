@@ -16,7 +16,6 @@ import GHC.Exts (Constraint)
 
 import Data.Proxy(Proxy(..))
 
-import Acid.Core.Utils
 import Acid.Core.Segment
 import Acid.Core.State
 import Data.Typeable
@@ -66,12 +65,12 @@ class AcidSerialiseC t where
   type AcidSerialiseConstraintAll t (ss :: [Symbol]) (nn :: [Symbol]) :: Constraint
 
 
-class (AcidSerialiseSegment t (SegmentS fieldName), ToUniqueText fieldName) => AcidSerialiseSegmentNameConstraint t fieldName
-instance (AcidSerialiseSegment t (SegmentS fieldName), ToUniqueText fieldName) => AcidSerialiseSegmentNameConstraint t fieldName
+class (AcidSerialiseSegment t (SegmentS fieldName), Segment fieldName) => AcidSerialiseSegmentNameConstraint t fieldName
+instance (AcidSerialiseSegment t (SegmentS fieldName), Segment fieldName) => AcidSerialiseSegmentNameConstraint t fieldName
 
 
-class (AcidSerialiseSegment t (V.Snd field), ToUniqueText (V.Fst field), KnownSymbol (V.Fst field)) => AcidSerialiseSegmentFieldConstraint t field
-instance (AcidSerialiseSegment t (V.Snd field), ToUniqueText (V.Fst field), KnownSymbol (V.Fst field)) => AcidSerialiseSegmentFieldConstraint t field
+class (AcidSerialiseSegment t (V.Snd field), Segment (V.Fst field), KnownSymbol (V.Fst field)) => AcidSerialiseSegmentFieldConstraint t field
+instance (AcidSerialiseSegment t (V.Snd field), Segment (V.Fst field), KnownSymbol (V.Fst field)) => AcidSerialiseSegmentFieldConstraint t field
 
 
 

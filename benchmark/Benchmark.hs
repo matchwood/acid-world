@@ -29,7 +29,7 @@ serialiserBenchmarks :: AppValidSerialiser -> Benchmark
 serialiserBenchmarks (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) =
   let sName = T.unpack . serialiserName $ (Proxy :: Proxy s)
   in bgroup sName [
-       env (openAppAcidWorldFreshFS o) $ \aw ->
+       env (openAppAcidWorldFreshFS o True) $ \aw ->
             bgroup "Empty state" [
                bench "insertUser" $ whnfIO (generateUserIO >>= runInsertUser aw)
              ],

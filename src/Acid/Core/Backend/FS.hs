@@ -56,18 +56,19 @@ instance AcidWorldBackend AcidWorldBackendFS where
     aWBConfigFSStateDir :: FilePath,
     aWBConfigGzip :: Bool
   }
+  backendConfigInfo c = "Gzip: " <> showT (aWBConfigGzip c)
   type AWBSerialiseT AcidWorldBackendFS = BL.ByteString
   type AWBSerialiseConduitT AcidWorldBackendFS = BS.ByteString
   initialiseBackend _ c _  = do
     stateP <- Dir.makeAbsolute (aWBConfigFSStateDir c)
     Dir.createDirectoryIfMissing True stateP
-    let eventPath = makeEventPath stateP
+    let eventPath = makeEventPath c
     hdl <- liftIO $ openBinaryFile eventPath ReadWriteMode
     hdlV <- liftIO $ STM.atomically $ newTMVar hdl
     pure . pure $ AWBStateFS c{aWBConfigFSStateDir = stateP} hdlV
   createCheckpointBackend s awu t = do
     sToWrite <- modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
-      let eventPath = makeEventPath (aWBConfigFSStateDir . aWBStateFSConfig $ s)
+      let eventPath = makeEventPath (aWBStateFSConfig s)
           nextEventFile = eventPath <> "1"
       liftIO $ hClose hdl
       Dir.renameFile eventPath nextEventFile
@@ -83,7 +84,7 @@ instance AcidWorldBackend AcidWorldBackendFS where
     if doesExist
       then do
         let middleware = if (aWBConfigGzip  . aWBStateFSConfig $ s) then ungzip else awaitForever $ yield
-        readLastCheckpointState cpFolder middleware ps s t
+        readLastCheckpointState middleware ps (aWBStateFSConfig s) t
       else pure . pure $ Nothing
 
   closeBackend s = modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
@@ -109,20 +110,20 @@ writeCheckpoint s t np = do
   let cpFolder = (aWBConfigFSStateDir . aWBStateFSConfig $ s) <> "/checkpoint"
   Dir.createDirectoryIfMissing True cpFolder
   let middleware = if (aWBConfigGzip  . aWBStateFSConfig $ s) then gzip else awaitForever $ yield
-  let acts =  cfoldMap_NP (Proxy :: Proxy (AcidSerialiseSegmentFieldConstraint t)) ((:[]) . writeSegment middleware t cpFolder) np
+  let acts =  cfoldMap_NP (Proxy :: Proxy (AcidSerialiseSegmentFieldConstraint t)) ((:[]) . writeSegment middleware (aWBStateFSConfig s) t) np
   mapConcurrently_ id acts
 
-writeSegment :: forall t m fs. (AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, AcidSerialiseSegmentFieldConstraint t fs) => ConduitT ByteString ByteString (ResourceT m) () -> AcidSerialiseEventOptions t -> FilePath -> V.ElField fs -> m ()
-writeSegment middleware t cpFolder ((V.Field seg)) = runConduitRes $
+writeSegment :: forall t m fs. (AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, AcidSerialiseSegmentFieldConstraint t fs) => ConduitT ByteString ByteString (ResourceT m) () -> AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> V.ElField fs -> m ()
+writeSegment middleware c t ((V.Field seg)) = runConduitRes $
   serialiseSegment t seg .|
   middleware .|
-  sinkFileCautious (cpFolder <> "/" <> T.unpack (toUniqueText (Proxy :: Proxy (V.Fst fs))))
+  sinkFileCautious (makeSegmentPath c (Proxy :: Proxy (V.Fst fs)))
 
 
 
 
-readLastCheckpointState :: forall ss m t. (ValidSegmentsSerialise t ss,  MonadUnliftIO m, AcidSerialiseConduitT t ~ BS.ByteString) => FilePath -> ConduitT ByteString ByteString (ResourceT m) () -> Proxy ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either Text (Maybe (SegmentsState ss)))
-readLastCheckpointState sPath middleware _ _ t = (fmap . fmap) (Just . npToSegmentsState) segsNpE
+readLastCheckpointState :: forall ss m t. (ValidSegmentsSerialise t ss,  MonadUnliftIO m, AcidSerialiseConduitT t ~ BS.ByteString) =>  ConduitT ByteString ByteString (ResourceT m) () -> Proxy ss -> AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either Text (Maybe (SegmentsState ss)))
+readLastCheckpointState middleware _ c t = (fmap . fmap) (Just . npToSegmentsState) segsNpE
 
   where
     segsNpE :: m (Either Text (NP V.ElField (ToSegmentFields ss)))
@@ -133,13 +134,16 @@ readLastCheckpointState sPath middleware _ _ t = (fmap . fmap) (Just . npToSegme
     readSegmentFromProxy _ =  Comp $  fmap V.Field $  Comp $ readSegment (Proxy :: Proxy a)
     readSegment :: forall sName. (AcidSerialiseSegmentNameConstraint t sName) => Proxy sName -> m (Either Text (SegmentS sName))
     readSegment ps = runResourceT $ runSTT $ runConduit $
-      transPipe lift (sourceFile (sPath <> "/" <> T.unpack (toUniqueText ps))) .|
+      transPipe lift (sourceFile $ makeSegmentPath c ps ) .|
       transPipe lift middleware .|
       deserialiseSegment t
 
     proxyNp :: NP Proxy (ToSegmentFields ss)
     proxyNp = pure_NP Proxy
 
+makeSegmentPath :: (Segment sName) => AWBConfig AcidWorldBackendFS ->  Proxy sName -> FilePath
+makeSegmentPath c ps = (aWBConfigFSStateDir c) <> "/checkpoint/" <> T.unpack (toUniqueText ps) <> if aWBConfigGzip c then ".gz" else ""
 
-makeEventPath :: FilePath -> FilePath
-makeEventPath fp = fp <> "/" <> "events"
+
+makeEventPath :: AWBConfig AcidWorldBackendFS -> FilePath
+makeEventPath c = (aWBConfigFSStateDir c) <> "/" <> "events"
