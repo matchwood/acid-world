@@ -136,7 +136,7 @@ deserialiseEventStreamWithPartialParser initialParser = awaitForever (loop (Left
             Nothing -> yield $  Left $ "Unexpected end of conduit values when named event has only been partially parsed"
             Just nt -> loop (Right newParser) nt
         Right (Right (bs, e)) -> yield (Right e) >> (if BS.null bs then  awaitForever (loop (Left initialParser)) else loop (Left initialParser) bs)
-
+-- @todo we may need some strictness annotations here - I'm not 100% sure how strictness works with conduit
 deserialiseSegmentWithPartialParser :: forall seg o m. (Monad m) => PartialParserBS seg -> ConduitT BS.ByteString o m (Either Text seg)
 deserialiseSegmentWithPartialParser origParser = await >>= loop origParser
     where
