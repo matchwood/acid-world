@@ -52,7 +52,7 @@ allSerialisers = [
 
 
 persistentBackends :: [AppValidBackend]
-persistentBackends = [AppValidBackend $ fmap AWBConfigFS mkTempDir]
+persistentBackends = [AppValidBackend $ AWBConfigFS <$> mkTempDir <*> pure True]
 
 ephemeralBackends :: [AppValidBackend]
 ephemeralBackends = [AppValidBackend $ pure AWBConfigMemory]
@@ -101,7 +101,7 @@ openAppAcidWorldRestoreState opts s = do
   t <- mkTempDir
   let e = topLevelStoredStateDir <> "/" <> "testState" <> "/" <> s
   copyDirectory e t
-  aw <- throwEither $ openAcidWorld Nothing (AWBConfigFS t) AWConfigPureState opts
+  aw <- throwEither $ openAcidWorld Nothing (AWBConfigFS t True) AWConfigPureState opts
   -- this is to force the internal state
   i <- query aw fetchUsersStats
   putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
@@ -115,7 +115,7 @@ openAppAcidWorldFresh bConfIO opts = do
 
 
 openAppAcidWorldFreshFS :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseConduitT s ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => (AcidSerialiseEventOptions s) -> IO (AppAW s)
-openAppAcidWorldFreshFS opts = openAppAcidWorldFresh (fmap AWBConfigFS mkTempDir) opts
+openAppAcidWorldFreshFS opts = openAppAcidWorldFresh (AWBConfigFS <$> mkTempDir <*> pure True) opts
 
 closeAndReopen :: Middleware s
 closeAndReopen = reopenAcidWorldMiddleware . closeAcidWorldMiddleware

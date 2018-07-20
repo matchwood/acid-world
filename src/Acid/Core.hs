@@ -34,6 +34,8 @@ data AcidWorld  ss nn t where
 
 openAcidWorld :: forall m ss nn b uMonad t.
                ( MonadUnliftIO m
+               , PrimMonad m
+               , MonadThrow m
                , AcidWorldBackend b
                , ValidAcidWorldState uMonad ss
                , AcidSerialiseEvent t
@@ -65,7 +67,7 @@ closeAcidWorld (AcidWorld {..}) = do
   closeBackend acidWorldBackendState
   closeState acidWorldState
 
-reopenAcidWorld :: (MonadUnliftIO m) => AcidWorld ss nn t -> m (Either Text (AcidWorld ss nn t))
+reopenAcidWorld :: (MonadUnliftIO m, PrimMonad m, MonadThrow m) => AcidWorld ss nn t -> m (Either Text (AcidWorld ss nn t))
 reopenAcidWorld (AcidWorld {..}) = do
   openAcidWorld Nothing (acidWorldBackendConfig) (acidWorldStateConfig) acidWorldSerialiserOptions
 
@@ -77,7 +79,7 @@ query ::forall ss nn t m a. MonadIO m => AcidWorld ss nn t -> (forall i. ValidAc
 query (AcidWorld {..}) q = runQuery acidWorldState q
 
 
-createCheckpoint ::forall ss nn t m. (MonadUnliftIO m) => AcidWorld ss nn t -> m ()
+createCheckpoint ::forall ss nn t m. (MonadUnliftIO m, MonadThrow m, PrimMonad m) => AcidWorld ss nn t -> m ()
 createCheckpoint (AcidWorld {..}) = createCheckpointBackend acidWorldBackendState acidWorldState acidWorldSerialiserOptions
 {-
 AcidWorldBackend
