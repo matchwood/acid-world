@@ -57,6 +57,7 @@ fromConduitType = snd . tConversions
 
 class AcidSerialiseSegment (t :: k) seg where
   serialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> seg -> ConduitT i (AcidSerialiseConduitT t) m ()
+  -- we have to provide a solution here that allows proper incremental parsing, and the only way to do that with CBOR is to run the conduit with STT. It shouldn't make any difference to other serialisers.
   deserialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> ConduitT (AcidSerialiseConduitT t) o (STT s m) (Either Text seg)
 
 

@@ -63,6 +63,7 @@ instance AcidSerialiseEvent AcidSerialiserJSON where
   type AcidSerialiseParser AcidSerialiserJSON ss nn = PartialParserBS (WrappedEvent ss nn)
   type AcidSerialiseT AcidSerialiserJSON = BL.ByteString
   type AcidSerialiseConduitT AcidSerialiserJSON = BS.ByteString
+  -- due to the constraints of json (single top level object) we have a choice between some kind of separation between events (newline) or to simply write out the event name followed by the event. we choose the latter because it should be more efficient from a parsing perspective, and it allows a common interface with other parsers (SafeCopy)
   serialiseEvent :: forall ss nn n.(AcidSerialiseConstraint AcidSerialiserJSON ss n) => AcidSerialiseEventOptions AcidSerialiserJSON -> StorableEvent ss nn n -> BL.ByteString
   serialiseEvent _ se = Aeson.encode (toUniqueText (Proxy :: Proxy n)) <> (Aeson.encode se)
   deserialiseEvent _ t = consumeAndRunPartialParser (jsonPartialParser :: PartialParserBS Text) jsonPartialParser (BL.toStrict t)

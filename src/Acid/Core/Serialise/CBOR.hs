@@ -36,7 +36,7 @@ import Acid.Core.State
 
 data AcidSerialiserCBOR
 
--- unfortunately we can't use partial parsing as effectively here as with safecopy - the use of the ST monad in CBOR seems to make it impossible to provide a way to loop a partially applied parser due to the (forall s. ) constraint of runST
+-- unfortunately we can't use partial parsing as effectively here as with safecopy - the use of the ST monad in CBOR seems to make it impossible to provide a way to loop a partially applied parser due to the (forall s. ) constraint of runST. so instead of partial parsing we loop and provide concatted bytestrings until we get a result
 type CBOREventParser ss nn = (BS.ByteString -> Either Text (Maybe (BS.ByteString, WrappedEvent ss nn)))
 instance AcidSerialiseEvent AcidSerialiserCBOR where
   data AcidSerialiseEventOptions AcidSerialiserCBOR = AcidSerialiserCBOROptions
@@ -83,7 +83,7 @@ instance AcidSerialiseC AcidSerialiserCBOR where
 
 instance (Serialise seg) => AcidSerialiseSegment AcidSerialiserCBOR seg where
   serialiseSegment _ seg = sourceLazy $ toLazyByteString $ encode seg
-{-  deserialiseSegment :: forall m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserCBOR -> ConduitT BS.ByteString o (STT s m) (Either Text seg)-}
+
   deserialiseSegment _ = loop deserialiseIncremental
     where
       loop :: (Monad m) => ST s (IDecode s seg) -> ConduitT BS.ByteString o (STT s m) (Either Text seg)
