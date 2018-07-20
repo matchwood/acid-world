@@ -132,9 +132,7 @@ readLastCheckpointState middleware _ c t = (fmap . fmap) (Just . npToSegmentsSta
     readSegmentFromProxy :: forall a b. (AcidSerialiseSegmentFieldConstraint t '(a, b), b ~ SegmentS a) => Proxy '(a, b) -> ((Concurrently m :.: Either Text) :.: V.ElField) '(a, b)
     readSegmentFromProxy _ =  Comp $  fmap V.Field $  Comp $ readSegment (Proxy :: Proxy a)
     readSegment :: forall sName. (AcidSerialiseSegmentNameConstraint t sName) => Proxy sName -> Concurrently m (Either Text (SegmentS sName))
-    readSegment ps = Concurrently $ do
-      traceM =<< fmap showT myThreadId
-      runResourceT $ runSTT $ runConduit $
+    readSegment ps = Concurrently $ runResourceT $ runSTT $ runConduit $
         transPipe lift (sourceFile $ makeSegmentPath c ps ) .|
         transPipe lift middleware .|
         deserialiseSegment t
