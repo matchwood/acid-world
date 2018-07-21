@@ -93,6 +93,7 @@ data BackendHandles m ss nn = BackendHandles {
   Events and basic event utilities
 -}
 
+-- this is like a monad, except for the type change (eg pure :: a -> m '[a])
 data EventC :: [k] -> * where
   EventC :: Event n -> EventC '[n]
   (:<<) :: (EventResult firstN -> Event n) -> EventC (firstN ': ns) -> EventC (n ': (firstN ': ns))

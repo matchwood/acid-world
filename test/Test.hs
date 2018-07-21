@@ -60,7 +60,9 @@ ephemeralBackendTests (AppValidBackend (bConf :: FilePath -> (AWBConfig b))) (Ap
 persistentBackendTests :: AppValidBackend -> AppValidSerialiser -> [TestTree]
 persistentBackendTests (AppValidBackend (bConf :: FilePath -> (AWBConfig b))) (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = [
     testCaseSteps "insertAndRestoreState" $ unit_insertAndRestoreState bConf o,
-    testCaseSteps "checkpointAndRestoreState" $ unit_checkpointAndRestoreState bConf o
+    testCaseSteps "checkpointAndRestoreState" $ unit_checkpointAndRestoreState bConf o,
+    testCaseSteps "compositionOfEventsState" $ unit_compositionOfEventsState bConf o
+
   ]
 
 
@@ -150,3 +152,18 @@ unit_checkpointAndRestoreState b o step = do
   step "Fetching users"
   us2 <- query aw2 fetchUsers
   assertBool "Fetched user list did not match inserted users" (L.sort us == L.sort us2)
+
+
+unit_compositionOfEventsState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => (FilePath -> AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
+unit_compositionOfEventsState b o step = do
+  us <- QC.generate $ generateUsers 1000
+  step "Opening acid world"
+  aw <- openAppAcidWorldFresh b o
+  step "Inserting users with phonenumbers"
+  mapM_ (runInsertUserC aw userToPhoneNumber) us
+  usF <- query aw fetchUsers
+  ps <- query aw fetchPhonenumbers
+  assertBool "Expected equal number of users and pns" (length usF == length ps)
+  where
+    userToPhoneNumber :: User -> Event "insertPhonenumber"
+    userToPhoneNumber u = (mkEvent (Proxy :: Proxy ("insertPhonenumber")) $ Phonenumber (userId u) "asdf" 24 False)

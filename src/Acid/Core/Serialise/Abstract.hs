@@ -67,9 +67,9 @@ class AcidSerialiseSegment (t :: k) seg where
 
 class AcidSerialiseC t where
   type AcidSerialiseConstraintP t (ss :: [Symbol]) :: Symbol -> Constraint
-  type AcidSerialiseConstraint t (ss :: [Symbol]) (n :: Symbol) :: Constraint
 
 type AcidSerialiseConstraintAll t ss nn = All (AcidSerialiseConstraintP t ss) nn
+type AcidSerialiseConstraint t ss n = AcidSerialiseConstraintP t ss n
 
 
 class (AcidSerialiseSegment t (SegmentS fieldName), Segment fieldName) => AcidSerialiseSegmentNameConstraint t fieldName

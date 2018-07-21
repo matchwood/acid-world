@@ -79,7 +79,6 @@ instance (ValidEventName ss n, All Serialise (EventArgs n)) => CanSerialiseCBOR 
 
 instance AcidSerialiseC AcidSerialiserCBOR where
   type AcidSerialiseConstraintP AcidSerialiserCBOR ss = CanSerialiseCBOR ss
-  type AcidSerialiseConstraint AcidSerialiserCBOR ss n = CanSerialiseCBOR ss n
 
 
 instance (Serialise seg) => AcidSerialiseSegment AcidSerialiserCBOR seg where
