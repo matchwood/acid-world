@@ -110,8 +110,8 @@ class (ValidEventName ss n, All FromJSON (EventArgs n), All ToJSON (EventArgs n)
 instance (ValidEventName ss n, All FromJSON (EventArgs n), All ToJSON (EventArgs n)) => CanSerialiseJSON ss n
 
 instance AcidSerialiseC AcidSerialiserJSON where
+  type AcidSerialiseConstraintP AcidSerialiserJSON ss = CanSerialiseJSON ss
   type AcidSerialiseConstraint AcidSerialiserJSON ss n = CanSerialiseJSON ss n
-  type AcidSerialiseConstraintAll AcidSerialiserJSON ss nn = All (CanSerialiseJSON ss) nn
 
 instance (ToJSON seg, FromJSON seg) => AcidSerialiseSegment AcidSerialiserJSON seg where
   serialiseSegment _ seg = sourceLazy $ Aeson.encode seg

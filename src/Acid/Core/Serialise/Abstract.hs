@@ -29,7 +29,7 @@ import Control.Monad.ST.Trans
 
   This is a fiddly setup. The issue is that we want to abstract serialisation in a context where we are parsing to constrained types. The general approach is to construct a text indexed map of parsers specialised to a specific type and serialise the text key along with the event data
 -}
-class (Monoid (AcidSerialiseT t)) => AcidSerialiseEvent (t :: k) where
+class (Semigroup (AcidSerialiseT t), Monoid (AcidSerialiseT t)) => AcidSerialiseEvent (t :: k) where
   data AcidSerialiseEventOptions t :: *
   type AcidSerialiseT t :: *
   type AcidSerialiseConduitT t :: *
@@ -66,8 +66,10 @@ class AcidSerialiseSegment (t :: k) seg where
 
 
 class AcidSerialiseC t where
+  type AcidSerialiseConstraintP t (ss :: [Symbol]) :: Symbol -> Constraint
   type AcidSerialiseConstraint t (ss :: [Symbol]) (n :: Symbol) :: Constraint
-  type AcidSerialiseConstraintAll t (ss :: [Symbol]) (nn :: [Symbol]) :: Constraint
+
+type AcidSerialiseConstraintAll t ss nn = All (AcidSerialiseConstraintP t ss) nn
 
 
 class (AcidSerialiseSegment t (SegmentS fieldName), Segment fieldName) => AcidSerialiseSegmentNameConstraint t fieldName

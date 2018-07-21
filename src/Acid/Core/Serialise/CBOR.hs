@@ -78,8 +78,9 @@ instance (ValidEventName ss n, All Serialise (EventArgs n)) => CanSerialiseCBOR 
 
 
 instance AcidSerialiseC AcidSerialiserCBOR where
+  type AcidSerialiseConstraintP AcidSerialiserCBOR ss = CanSerialiseCBOR ss
   type AcidSerialiseConstraint AcidSerialiserCBOR ss n = CanSerialiseCBOR ss n
-  type AcidSerialiseConstraintAll AcidSerialiserCBOR ss nn = All (CanSerialiseCBOR ss) nn
+
 
 instance (Serialise seg) => AcidSerialiseSegment AcidSerialiserCBOR seg where
   serialiseSegment _ seg = sourceLazy $ toLazyByteString $ encode seg

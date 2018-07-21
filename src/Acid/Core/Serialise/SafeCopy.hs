@@ -66,8 +66,8 @@ class (ValidEventName ss n, All SafeCopy (EventArgs n)) => CanSerialiseSafeCopy 
 instance (ValidEventName ss n, All SafeCopy (EventArgs n)) => CanSerialiseSafeCopy ss n
 
 instance AcidSerialiseC AcidSerialiserSafeCopy where
+  type AcidSerialiseConstraintP AcidSerialiserSafeCopy ss = CanSerialiseSafeCopy ss
   type AcidSerialiseConstraint AcidSerialiserSafeCopy ss n = CanSerialiseSafeCopy ss n
-  type AcidSerialiseConstraintAll AcidSerialiserSafeCopy ss nn = All (CanSerialiseSafeCopy ss) nn
 
 instance (SafeCopy seg) => AcidSerialiseSegment AcidSerialiserSafeCopy seg where
   serialiseSegment _ seg = sourceLazy $ runPutLazy $ safePut seg
