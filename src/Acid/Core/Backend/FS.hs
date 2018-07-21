@@ -97,12 +97,13 @@ instance AcidWorldBackend AcidWorldBackendFS where
 
 
   -- this should be bracketed and the runUpdateC should return the initial state, so we can rollback if necessary @todo
-  handleUpdateEventC serializer s awu ec = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
+  handleUpdateEventC serializer s awu ec act = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
     (es, r) <- runUpdateC awu ec
     stEs <- mkStorableEvents es
+    ioR <- act r
     BL.hPut hdl $ serializer stEs
     hFlush hdl
-    pure r
+    pure (r, ioR)
 
 
 

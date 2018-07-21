@@ -40,5 +40,5 @@ class AcidWorldBackend (b :: k) where
   -- return events since the last checkpoint, if any
   loadEvents :: (MonadIO m) => (ConduitT (AWBSerialiseConduitT b) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->  AWBState b -> m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
   loadEvents _ _ = pure $ yieldMany []
-  handleUpdateEventC :: (All (IsValidEvent ss nn) (firstN ': ns), All (ValidEventName ss) (firstN ': ns), MonadIO m, ValidAcidWorldState u ss) => (NP (StorableEvent ss nn) (firstN ': ns) -> AWBSerialiseT b) ->  (AWBState b) -> (AWState u ss) -> EventC (firstN ': ns) -> m (EventResult firstN)
+  handleUpdateEventC :: (All (IsValidEvent ss nn) (firstN ': ns), All (ValidEventName ss) (firstN ': ns), MonadIO m, ValidAcidWorldState u ss) => (NP (StorableEvent ss nn) (firstN ': ns) -> AWBSerialiseT b) ->  (AWBState b) -> (AWState u ss) -> EventC (firstN ': ns) -> (EventResult firstN -> m ioRes) -> m (EventResult firstN, ioRes)
 

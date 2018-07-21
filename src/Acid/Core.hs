@@ -75,7 +75,7 @@ update :: forall ss nn n m t. (IsValidEvent ss nn n, MonadIO m, AcidSerialiseCon
 update aw e = updateC aw (EventC e)
 
 updateC :: forall ss nn firstN ns m t. (All (IsValidEvent ss nn) (firstN ': ns), All (ValidEventName ss) (firstN ': ns), MonadIO m, AcidSerialiseConstraintAll t ss  (firstN ': ns)) => AcidWorld ss nn t -> EventC (firstN ': ns) -> m (EventResult firstN)
-updateC (AcidWorld {..}) = handleUpdateEventC ((serialiseEventNP acidWorldSerialiserOptions) :: NP (StorableEvent ss nn) (firstN ': ns) -> AcidSerialiseT t)  acidWorldBackendState acidWorldState
+updateC (AcidWorld {..}) ec = fmap fst $ handleUpdateEventC ((serialiseEventNP acidWorldSerialiserOptions) :: NP (StorableEvent ss nn) (firstN ': ns) -> AcidSerialiseT t)  acidWorldBackendState acidWorldState ec (const $ pure ())
 
 
 query ::forall ss nn t m a. MonadIO m => AcidWorld ss nn t -> (forall i. ValidAcidWorldState i ss => AWQuery i ss a) -> m a
