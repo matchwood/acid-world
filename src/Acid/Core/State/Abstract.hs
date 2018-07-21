@@ -41,7 +41,6 @@ class AcidWorldState (i :: *) where
   getSegment :: (HasSegment ss s) =>  Proxy s -> AWUpdate i ss (SegmentS s)
   putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> AWUpdate i ss ()
   askSegment :: (HasSegment ss s) =>  Proxy s -> AWQuery i ss (SegmentS s)
-  runUpdate :: (ValidSegments ss, ValidEventName ss n, MonadIO m) => AWState i ss -> Event n -> m (EventResult n)
   runUpdateC :: (ValidSegments ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState i ss -> EventC (firstN ': ns) -> m (NP Event (firstN ': ns), EventResult firstN)
   runQuery :: (MonadIO m) => AWState i ss -> AWQuery i ss a -> m a
   liftQuery :: AWQuery i ss a -> AWUpdate i ss a

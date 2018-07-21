@@ -96,13 +96,7 @@ instance AcidWorldBackend AcidWorldBackendFS where
            deserialiseConduit
 
 
-  -- this should be bracketed and the runUpdate should return the initial state, so we can rollback if necessary @todo
-  handleUpdateEvent serializer s awu (e :: Event n) = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
-    stE <- mkStorableEvent e
-    BL.hPut hdl $ serializer stE
-    hFlush hdl
-    runUpdate awu e
-
+  -- this should be bracketed and the runUpdateC should return the initial state, so we can rollback if necessary @todo
   handleUpdateEventC serializer s awu ec = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
     (es, r) <- runUpdateC awu ec
     stEs <- mkStorableEvents es

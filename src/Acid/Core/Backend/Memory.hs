@@ -23,6 +23,5 @@ instance AcidWorldBackend AcidWorldBackendMemory where
   type AWBSerialiseT AcidWorldBackendMemory = BL.ByteString
   type AWBSerialiseConduitT AcidWorldBackendMemory = BS.ByteString
   initialiseBackend _ _ _  = pure . pure $ AWBStateMemory
-  handleUpdateEvent _ _ awu e = runUpdate awu e
   handleUpdateEventC _ _ awu ec = fmap snd $ runUpdateC awu ec
 
