@@ -29,7 +29,7 @@ import Control.Monad.ST.Trans
 
   This is a fiddly setup. The issue is that we want to abstract serialisation in a context where we are parsing to constrained types. The general approach is to construct a text indexed map of parsers specialised to a specific type and serialise the text key along with the event data
 -}
-class AcidSerialiseEvent (t :: k) where
+class (Monoid (AcidSerialiseT t)) => AcidSerialiseEvent (t :: k) where
   data AcidSerialiseEventOptions t :: *
   type AcidSerialiseT t :: *
   type AcidSerialiseConduitT t :: *
@@ -55,8 +55,9 @@ fromConduitType :: (AcidSerialiseEvent t) => AcidSerialiseEventOptions t -> Acid
 fromConduitType = snd . tConversions
 
 
-serialiseEventNP :: (AcidSerialiseConstraintAll t ss ns) =>  AcidSerialiseEventOptions t -> NP (StorableEvent ss nn) ns -> AcidSerialiseT t
-serialiseEventNP = undefined
+serialiseEventNP :: (AcidSerialiseEvent t, AcidSerialiseConstraintAll t ss ns) =>  AcidSerialiseEventOptions t -> NP (StorableEvent ss nn) ns -> AcidSerialiseT t
+serialiseEventNP _ Nil = mempty
+serialiseEventNP t ((:*) se restNp) = serialiseEventNP t restNp <> serialiseEvent t se
 
 class AcidSerialiseSegment (t :: k) seg where
   serialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> seg -> ConduitT i (AcidSerialiseConduitT t) m ()
@@ -79,10 +80,10 @@ instance (AcidSerialiseSegment t (V.Snd field), Segment (V.Fst field), KnownSymb
 
 
 
-class (a ~ b, KnownSegmentField a, SegmentFetching ss a, AcidSerialiseSegmentFieldConstraint t a) => SegmentFieldToSegmentFieldSerialise ss t a b
-instance (a ~ b, KnownSegmentField a, SegmentFetching ss a, AcidSerialiseSegmentFieldConstraint t a) => SegmentFieldToSegmentFieldSerialise ss t a b
+class (SegmentFetching ss sField, AcidSerialiseSegmentFieldConstraint t sField) => SegmentFieldSerialise ss t sField
+instance (SegmentFetching ss sField, AcidSerialiseSegmentFieldConstraint t sField) => SegmentFieldSerialise ss t sField
 
-type ValidSegmentsSerialise t ss = (All (AcidSerialiseSegmentFieldConstraint t) (ToSegmentFields ss), ValidSegments ss, AllZip (SegmentFieldToSegmentFieldSerialise ss t) (ToSegmentFields ss) (ToSegmentFields ss))
+type ValidSegmentsSerialise t ss = (All (SegmentFieldSerialise ss t) (ToSegmentFields ss), All (AcidSerialiseSegmentFieldConstraint t) (ToSegmentFields ss), ValidSegments ss)
 
 
 

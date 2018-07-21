@@ -103,6 +103,14 @@ instance AcidWorldBackend AcidWorldBackendFS where
     hFlush hdl
     runUpdate awu e
 
+  handleUpdateEventC serializer s awu ec = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
+    (es, r) <- runUpdateC awu ec
+    stEs <- mkStorableEvents es
+    BL.hPut hdl $ serializer stEs
+    hFlush hdl
+    pure r
+
+
 
 writeCheckpoint :: forall t sFields m. (AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, MonadThrow m, PrimMonad m, All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()
 writeCheckpoint s t np = do
@@ -128,7 +136,7 @@ readLastCheckpointState middleware _ c t = (fmap . fmap) (Just . npToSegmentsSta
     segsNpE :: m (Either Text (NP V.ElField (ToSegmentFields ss)))
     segsNpE = runConcurrently $ unComp $ sequence'_NP segsNp
     segsNp :: NP ((Concurrently m  :.: Either Text) :.: V.ElField) (ToSegmentFields ss)
-    segsNp = trans_NP (Proxy :: Proxy (SegmentFieldToSegmentFieldSerialise ss t)) readSegmentFromProxy proxyNp
+    segsNp = cmap_NP (Proxy :: Proxy (SegmentFieldSerialise ss t)) readSegmentFromProxy proxyNp
     readSegmentFromProxy :: forall a b. (AcidSerialiseSegmentFieldConstraint t '(a, b), b ~ SegmentS a) => Proxy '(a, b) -> ((Concurrently m :.: Either Text) :.: V.ElField) '(a, b)
     readSegmentFromProxy _ =  Comp $  fmap V.Field $  Comp $ readSegment (Proxy :: Proxy a)
     readSegment :: forall sName. (AcidSerialiseSegmentNameConstraint t sName) => Proxy sName -> Concurrently m (Either Text (SegmentS sName))

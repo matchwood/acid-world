@@ -42,7 +42,7 @@ class AcidWorldState (i :: *) where
   putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> AWUpdate i ss ()
   askSegment :: (HasSegment ss s) =>  Proxy s -> AWQuery i ss (SegmentS s)
   runUpdate :: (ValidSegments ss, ValidEventName ss n, MonadIO m) => AWState i ss -> Event n -> m (EventResult n)
-  runUpdateC :: (ValidSegments ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState i ss -> EventC (firstN ': ns) -> m (EventResult firstN)
+  runUpdateC :: (ValidSegments ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState i ss -> EventC (firstN ': ns) -> m (NP Event (firstN ': ns), EventResult firstN)
   runQuery :: (MonadIO m) => AWState i ss -> AWQuery i ss a -> m a
   liftQuery :: AWQuery i ss a -> AWUpdate i ss a
 
@@ -71,7 +71,7 @@ askStateNp :: forall i ss. (ValidAcidWorldState i ss) => AWQuery i ss (NP V.ElFi
 askStateNp = sequence'_NP segsNp
   where
     segsNp :: NP (AWQuery i ss :.: V.ElField) (ToSegmentFields ss)
-    segsNp = trans_NP (Proxy :: Proxy (SegmentFieldToSegmentField ss)) askSegmentFromProxy proxyNp
+    segsNp = cmap_NP (Proxy :: Proxy (SegmentFetching ss)) askSegmentFromProxy proxyNp
     askSegmentFromProxy :: forall sField. (SegmentFetching ss sField) =>  Proxy sField -> (AWQuery i ss :.: V.ElField) sField
     askSegmentFromProxy _ =  Comp $  fmap V.Field $ askSegment (Proxy :: Proxy (V.Fst sField))
     proxyNp :: NP Proxy (ToSegmentFields ss)
@@ -79,13 +79,6 @@ askStateNp = sequence'_NP segsNp
 
 askSegmentsState :: forall i ss. (ValidAcidWorldState i ss) => AWQuery i ss (SegmentsState ss)
 askSegmentsState = fmap npToSegmentsState askStateNp
-
-{-{-    segSNp :: NP (AWQuery i ss) (ToSegmentTypes ss)
-    segSNp = trans_NP (Proxy :: Proxy SegmentNameToState) askSegmentFromDict dictNp-}
-    askSegmentFromDict :: forall s. Dict (HasSegment ss) s -> AWQuery i ss (SegmentS s)
-    askSegmentFromDict Dict = askSegment (Proxy :: Proxy s)
-    dictNp :: NP (Dict (HasSegment ss)) ss
-    dictNp = cpure_NP (Proxy :: Proxy (HasSegment ss)) Dict-}
 
 
 
@@ -104,12 +97,16 @@ data EventC :: [k] -> * where
   EventC :: Event n -> EventC '[n]
   (:<<) :: (EventResult firstN -> Event n) -> EventC (firstN ': ns) -> EventC (n ': (firstN ': ns))
 
-runEventC :: forall ss firstN ns i. (All (ValidEventName ss) (firstN ': ns), ValidAcidWorldState i ss) => EventC (firstN ': ns) -> AWUpdate i ss (EventResult firstN)
-runEventC (EventC ((Event xs) :: Event n)) = runEvent (Proxy :: Proxy n) xs
+runEventC :: forall ss firstN ns i. (All (ValidEventName ss) (firstN ': ns), ValidAcidWorldState i ss) => EventC (firstN ': ns) -> AWUpdate i ss (NP Event (firstN ': ns), EventResult firstN)
+runEventC (EventC (e@(Event xs) :: Event n)) = do
+  r <- runEvent (Proxy :: Proxy n) xs
+  pure (e :* Nil, r)
 runEventC ((:<<) f ec) = do
-  r <- runEventC ec
+  (npRest, r) <- runEventC ec
   case f r of
-    (Event xs :: Event n) -> runEvent (Proxy :: Proxy n) xs
+    (e@(Event xs) :: Event n) -> do
+      fr <- runEvent (Proxy :: Proxy n) xs
+      pure (e :* npRest, fr)
 
 
 
@@ -178,6 +175,12 @@ data StorableEvent ss nn n = StorableEvent {
     storableEventId :: EventId,
     storableEventEvent :: Event n
   } deriving (Eq, Show)
+
+mkStorableEvents :: forall m ns ss nn. (MonadIO m, SListI ns) => NP Event ns -> m (NP (StorableEvent ss nn) ns)
+mkStorableEvents np = sequence'_NP stCompNp
+  where
+    stCompNp :: NP (m :.: StorableEvent ss nn) ns
+    stCompNp = map_NP (Comp . mkStorableEvent) np
 
 mkStorableEvent :: (MonadIO m) => Event n -> m (StorableEvent ss nn n)
 mkStorableEvent e = do

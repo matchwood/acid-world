@@ -24,7 +24,7 @@ instance AcidWorldState AcidStatePureState where
     }
   data AWConfig AcidStatePureState ss = AWConfigPureState
 
-  newtype AWUpdate AcidStatePureState ss a = AWUpdatePureState (St.State (SegmentsState ss) a)
+  newtype AWUpdate AcidStatePureState ss a = AWUpdatePureState {runAWUpdatePureState :: (St.State (SegmentsState ss) a)}
     deriving (Functor, Applicative, Monad)
   newtype AWQuery AcidStatePureState ss a = AWQueryPureState (Re.Reader (SegmentsState ss) a)
     deriving (Functor, Applicative, Monad)
@@ -61,15 +61,18 @@ instance AcidWorldState AcidStatePureState where
         in snd $ St.runState stm s
   runUpdate :: forall ss n m. (ValidAcidWorldState AcidStatePureState ss, ValidEventName ss n , MonadIO m) => AWState AcidStatePureState ss -> Event n -> m (EventResult n)
   runUpdate awState (Event xs :: Event n) = liftIO $ STM.atomically $ do
-    let (AWUpdatePureState stm :: ((AWUpdate AcidStatePureState)   ss (EventResult n))) = runEvent (Proxy :: Proxy n) xs
+    let stm = runAWUpdatePureState $ runEvent (Proxy :: Proxy n) xs
+
     s <- STM.readTVar (aWStatePureStateState awState)
     (!a, !s') <- pure $ St.runState stm s
     STM.writeTVar (aWStatePureStateState awState) s'
     return a
 
-  runUpdateC :: forall ss firstN ns m. (ValidAcidWorldState AcidStatePureState ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState AcidStatePureState ss -> EventC (firstN ': ns) -> m (EventResult firstN)
+  runUpdateC :: forall ss firstN ns m. (ValidAcidWorldState AcidStatePureState ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState AcidStatePureState ss -> EventC (firstN ': ns) -> m (NP Event (firstN ': ns), EventResult firstN)
   runUpdateC awState ec = liftIO $ STM.atomically $ do
-    let (AWUpdatePureState stm :: ((AWUpdate AcidStatePureState)   ss (EventResult firstN))) = runEventC ec
+
+    --let (AWUpdatePureState stm :: ((AWUpdate AcidStatePureState)   ss (NP Event (firstN ': ns), EventResult firstN))) = runEventC ec
+    let stm = runAWUpdatePureState $ runEventC ec
     s <- STM.readTVar (aWStatePureStateState awState)
     (!a, !s') <- pure $ St.runState stm s
     STM.writeTVar (aWStatePureStateState awState) s'

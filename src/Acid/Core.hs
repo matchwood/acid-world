@@ -74,7 +74,7 @@ reopenAcidWorld (AcidWorld {..}) = do
 update :: forall ss nn n m t. (IsValidEvent ss nn n, MonadIO m, AcidSerialiseConstraint t ss n) => AcidWorld ss nn t -> Event n -> m (EventResult n)
 update (AcidWorld {..}) = handleUpdateEvent ((serialiseEvent acidWorldSerialiserOptions) :: StorableEvent ss nn n -> AcidSerialiseT t)  acidWorldBackendState acidWorldState
 
-updateC :: forall ss nn firstN ns m t. (All (IsValidEvent ss nn) (firstN ': ns), All (ValidEventName ss) (firstN ': ns), MonadIO m, AcidSerialiseConstraintAll t ss (firstN ': ns)) => AcidWorld ss nn t -> EventC (firstN ': ns) -> m (EventResult firstN)
+updateC :: forall ss nn firstN ns m t. (All (IsValidEvent ss nn) (firstN ': ns), All (ValidEventName ss) (firstN ': ns), MonadIO m, AcidSerialiseConstraintAll t ss  (firstN ': ns)) => AcidWorld ss nn t -> EventC (firstN ': ns) -> m (EventResult firstN)
 updateC (AcidWorld {..}) = handleUpdateEventC ((serialiseEventNP acidWorldSerialiserOptions) :: NP (StorableEvent ss nn) (firstN ': ns) -> AcidSerialiseT t)  acidWorldBackendState acidWorldState
 
 

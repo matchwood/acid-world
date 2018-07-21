@@ -29,6 +29,19 @@ showT = utf8BuilderToText . displayShow
 showSymbol :: (KnownSymbol a) => proxy a -> T.Text
 showSymbol p = T.pack $ symbolVal p
 
+type family Sort (xs :: [Symbol]) where
+  Sort '[] = '[]
+  Sort (x ': xs) = Insert x (Sort xs)
+
+type family Insert x xs where
+  Insert x '[] = x ': '[]
+  Insert x (y ': ys) = Insert' (CmpSymbol x y) x y ys
+
+type family Insert' b x y ys where
+  Insert' 'LT  x y ys = x ': (y ': ys)
+  Insert' _    x y ys = y ': Insert x ys
+
+
 
 type family Last (a :: [k]) :: k where
   Last '[] = TypeError ('Text "Expected a type level list with at least one element")
