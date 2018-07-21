@@ -67,6 +67,15 @@ instance AcidWorldState AcidStatePureState where
     STM.writeTVar (aWStatePureStateState awState) s'
     return a
 
+  runUpdateC :: forall ss firstN ns m. (ValidAcidWorldState AcidStatePureState ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState AcidStatePureState ss -> EventC (firstN ': ns) -> m (EventResult firstN)
+  runUpdateC awState ec = liftIO $ STM.atomically $ do
+    let (AWUpdatePureState stm :: ((AWUpdate AcidStatePureState)   ss (EventResult firstN))) = runEventC ec
+    s <- STM.readTVar (aWStatePureStateState awState)
+    (!a, !s') <- pure $ St.runState stm s
+    STM.writeTVar (aWStatePureStateState awState) s'
+    return a
+
+
   runQuery awState (AWQueryPureState q) = do
     liftIO $ STM.atomically $ do
       s <- STM.readTVar (aWStatePureStateState awState)

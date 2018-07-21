@@ -72,7 +72,16 @@ instance Eventable "insertUser" where
   type EventSegments "insertUser" = '["Users"]
   runEvent _ = toRunEvent insertUser
 
+insertUserWithBoolReturn :: (ValidAcidWorldState i ss, HasSegment ss  "Users") => User -> AWUpdate i ss Bool
+insertUserWithBoolReturn a = do
+  u <- insertUser a
+  return $ userDisabled u
 
+instance Eventable "insertUserWithBoolReturn" where
+  type EventArgs "insertUserWithBoolReturn" = '[User]
+  type EventResult "insertUserWithBoolReturn" = Bool
+  type EventSegments "insertUserWithBoolReturn" = '["Users"]
+  runEvent _ = toRunEvent insertUserWithBoolReturn
 
 fetchUsers :: (ValidAcidWorldState i ss, HasSegment ss  "Users") => AWQuery i ss [User]
 fetchUsers = fmap IxSet.toList $ askSegment (Proxy :: Proxy "Users")

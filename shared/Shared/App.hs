@@ -33,6 +33,7 @@ type AppValidSerialiserConstraint s = (
   AcidSerialiseConstraint s AppSegments "insertUser",
   AcidSerialiseConstraint s AppSegments "insertAddress",
   AcidSerialiseConstraint s AppSegments "insertPhonenumber",
+  AcidSerialiseConstraint s AppSegments "insertUserWithBoolReturn",
   ValidSegmentsSerialise s AppSegments
   )
 
@@ -81,7 +82,7 @@ instance NFData (AcidWorld a n t) where
 
 
 type AppSegments = '["Users", "Addresses", "Phonenumbers"]
-type AppEvents = '["insertUser", "insertAddress", "insertPhonenumber"]
+type AppEvents = '["insertUser", "insertAddress", "insertPhonenumber", "insertUserWithBoolReturn"]
 
 type AppAW s = AcidWorld AppSegments AppEvents s
 
@@ -142,6 +143,12 @@ insertUsers i iAw = do
 
 runInsertUser :: AcidSerialiseConstraint s AppSegments "insertUser" => AppAW s -> User -> IO User
 runInsertUser aw u = update aw (mkEvent (Proxy :: Proxy ("insertUser")) u)
+
+runInsertUserC :: AcidSerialiseConstraintAll s AppSegments '["insertPhonenumber", "insertUserWithBoolReturn"] => AppAW s -> User -> IO Phonenumber
+runInsertUserC aw u = updateC aw $ (boolToPhoneNumber :<< (EventC $ mkEvent (Proxy :: Proxy ("insertUserWithBoolReturn")) u))
+
+boolToPhoneNumber :: Bool -> Event "insertPhonenumber"
+boolToPhoneNumber b = (mkEvent (Proxy :: Proxy ("insertPhonenumber")) $ Phonenumber 12312 "asdf" 24 b)
 
 runInsertAddress :: AcidSerialiseConstraint s AppSegments "insertAddress" => AppAW s -> Address -> IO Address
 runInsertAddress aw u = update aw (mkEvent (Proxy :: Proxy ("insertAddress")) u)

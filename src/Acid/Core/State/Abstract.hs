@@ -41,10 +41,10 @@ class AcidWorldState (i :: *) where
   getSegment :: (HasSegment ss s) =>  Proxy s -> AWUpdate i ss (SegmentS s)
   putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> AWUpdate i ss ()
   askSegment :: (HasSegment ss s) =>  Proxy s -> AWQuery i ss (SegmentS s)
-  runUpdate :: (ValidSegments ss, ValidEventName ss n , MonadIO m) => AWState i ss -> Event n -> m (EventResult n)
+  runUpdate :: (ValidSegments ss, ValidEventName ss n, MonadIO m) => AWState i ss -> Event n -> m (EventResult n)
+  runUpdateC :: (ValidSegments ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState i ss -> EventC (firstN ': ns) -> m (EventResult firstN)
   runQuery :: (MonadIO m) => AWState i ss -> AWQuery i ss a -> m a
   liftQuery :: AWQuery i ss a -> AWUpdate i ss a
-
 
 
 
@@ -100,14 +100,26 @@ data BackendHandles m ss nn = BackendHandles {
   Events and basic event utilities
 -}
 
+data EventC :: [k] -> * where
+  EventC :: Event n -> EventC '[n]
+  (:<<) :: (EventResult firstN -> Event n) -> EventC (firstN ': ns) -> EventC (n ': (firstN ': ns))
 
+runEventC :: forall ss firstN ns i. (All (ValidEventName ss) (firstN ': ns), ValidAcidWorldState i ss) => EventC (firstN ': ns) -> AWUpdate i ss (EventResult firstN)
+runEventC (EventC ((Event xs) :: Event n)) = runEvent (Proxy :: Proxy n) xs
+runEventC ((:<<) f ec) = do
+  r <- runEventC ec
+  case f r of
+    (Event xs :: Event n) -> runEvent (Proxy :: Proxy n) xs
+
+
+
+class (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss (n :: Symbol)
+instance (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss n
 
 class (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsValidEvent ss nn (n :: Symbol)
 instance (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsValidEvent ss nn n
 
 
-class (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss (n :: Symbol)
-instance (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss n
 
 type ValidEventNames ss nn = (All (ValidEventName ss) nn, UniqueElementsWithErr nn ~ 'True)
 

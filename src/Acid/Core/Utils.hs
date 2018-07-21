@@ -30,6 +30,15 @@ showSymbol :: (KnownSymbol a) => proxy a -> T.Text
 showSymbol p = T.pack $ symbolVal p
 
 
+type family Last (a :: [k]) :: k where
+  Last '[] = TypeError ('Text "Expected a type level list with at least one element")
+  Last '[a] = a
+  Last (a ': xs) = Last xs
+
+type family First (a :: [k]) :: k where
+  First '[] = TypeError ('Text "Expected a type level list with at least one element")
+  First (a ': _) = a
+
 type family Union (a :: [k]) (b :: [k]) = (res :: [k]) where
   Union '[] b = b
   Union (a ': xs) b = a ': Union xs b
