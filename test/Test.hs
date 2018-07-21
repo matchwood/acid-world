@@ -164,6 +164,7 @@ unit_compositionOfEventsState b o step = do
   usF <- query aw fetchUsers
   ps <- query aw fetchPhonenumbers
   assertBool "Expected equal number of users and pns" (length usF == length ps)
+  assertBool "Expected equal ids for every pair of user/numbers" (and $ map (\(u, p) -> userId u == phonenumberId p ) (zip usF ps))
   where
     userToPhoneNumber :: User -> Event "insertPhonenumber"
     userToPhoneNumber u = (mkEvent (Proxy :: Proxy ("insertPhonenumber")) $ Phonenumber (userId u) "asdf" 24 False)
