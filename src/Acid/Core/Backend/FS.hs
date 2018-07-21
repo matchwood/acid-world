@@ -96,7 +96,7 @@ instance AcidWorldBackend AcidWorldBackendFS where
            deserialiseConduit
 
 
-  -- this should be bracketed and the runUpdateC should return the initial state, so we can rollback if necessary @todo
+  -- this should be bracketed and restored correctly, including bracketing the io action. Also the IO action should perhaps be restricted (if it loops to this then there will be trouble!)
   handleUpdateEventC serializer s awu ec act = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
     (es, r) <- runUpdateC awu ec
     stEs <- mkStorableEvents es
