@@ -30,6 +30,7 @@ import Control.Monad.ST.Trans
 import Control.Arrow (left)
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray.Encoding as BA
+import qualified Data.ByteArray as BA
 
 data AcidWorldBackendFS
 
@@ -136,11 +137,8 @@ writeSegment middleware s t ((V.Field seg)) = do
     writeSegmentCheckFile = do
       let segPath = makeSegmentPath (aWBStateFSConfig $ s) (Proxy :: Proxy (V.Fst fs))
           segCheckPath = makeSegmentCheckPath (aWBStateFSConfig $ s) (Proxy :: Proxy (V.Fst fs))
-      hash <- fmap sha256 $ BL.readFile segPath
-      -- @ todo redo this with the hashing process inside the conduit reading from the file
-      runConduitRes $
-        sourceLazy (BL.fromStrict $ BA.convertToBase BA.Base64 hash ) .|
-        sinkFile segCheckPath
+      hash <- fileSha256 segPath
+      BS.writeFile segCheckPath (BA.convertToBase BA.Base16 hash)
 
 
 
@@ -157,22 +155,45 @@ readLastCheckpointState middleware _ s t = (fmap . fmap) (Just . npToSegmentsSta
     readSegmentFromProxy _ =  Comp $  fmap V.Field $  Comp $ readSegment (Proxy :: Proxy a)
     readSegment :: forall sName. (AcidSerialiseSegmentNameConstraint t sName) => Proxy sName -> Concurrently m (Either Text (SegmentS sName))
     readSegment ps = Concurrently $ do
-      -- @ todo redo this with the hashing process inside a conduit reading from the file
-
       let segPath = makeSegmentPath (aWBStateFSConfig $ s) ps
           segCheckPath = makeSegmentCheckPath (aWBStateFSConfig $ s) ps
-      hash <- fmap (BA.convertToBase BA.Base64 . sha256) $ BL.readFile segPath
-      checkHash <- BS.readFile segCheckPath
-      if hash /= (checkHash)
-        then pure . Left $ "Invalid checkpoint - check file ("  <> showT segCheckPath <> ": " <> showT checkHash <> ") did not match hash of segment file" <> "(" <> showT segPath <> ": " <>  showT hash <> ")" <> " when reading segment *" <> toUniqueText ps <> "*"
-        else runResourceT $ runSTT $ runConduit $
-        transPipe lift (sourceFile $ makeSegmentPath (aWBStateFSConfig $ s) ps ) .|
-        transPipe lift middleware .|
-        deserialiseSegment t
+
+      (segPathExists, segCheckPathExists) <- do
+        a <- Dir.doesFileExist segPath
+        b <- Dir.doesFileExist segCheckPath
+        pure (a, b)
+
+      case (segPathExists, segCheckPathExists) of
+        (False, False) -> pure . Right $ defaultState ps
+        (False, True) -> pure . Left $ prettySegment ps <> "Segment check file could not be found at " <> showT segCheckPath <> ". If you are confident that your segment file contains the correct data then you can fix this error by manually creating a segment check file at that path with the output of `sha256sum "<> showT segPath <> "`"
+        (True, False) -> pure . Left $  prettySegment ps <> "Segment file missing at " <> showT segPath <> ". This is almost certainly due to some kind of data corruption. To clear this error you can delete the check file at " <> showT segCheckPath <> " but that will revert the system to using the default state defined for this segment"
+        (True, True) -> do
+          hash <- fileSha256 segPath
+          eBind (readSha256FromFile segCheckPath) $ \checkHash -> do
+            if hash /= checkHash
+              then pure . Left $ "Invalid checkpoint - check file ("  <> showT segCheckPath <> ": " <> showT checkHash <> ") did not match hash of segment file" <> "(" <> showT segPath <> ": " <>  showT hash <> ")" <> " when reading segment *" <> toUniqueText ps <> "*"
+              else runResourceT $ runSTT $ runConduit $
+              transPipe lift (sourceFile $ makeSegmentPath (aWBStateFSConfig $ s) ps ) .|
+              transPipe lift middleware .|
+              deserialiseSegment t
 
     proxyNp :: NP Proxy (ToSegmentFields ss)
     proxyNp = pure_NP Proxy
 
+fileSha256 :: (MonadUnliftIO m) => FilePath -> m (Hash.Digest Hash.SHA256)
+fileSha256 fp = fmap Hash.hashFinalize $ runConduitRes $
+  sourceFile fp .|
+  foldlC Hash.hashUpdate Hash.hashInit
+
+readSha256FromFile :: (MonadUnliftIO m) => FilePath -> m (Either Text (Hash.Digest Hash.SHA256))
+readSha256FromFile fp = do
+  bs <- fmap (BA.convertFromBase BA.Base16) $ BS.readFile fp
+  case bs of
+    Left e -> pure . Left $ "Could not convert file contents to Base16 Bytes from " <> showT fp <> ": " <> T.pack e
+    Right (b :: BA.Bytes) ->
+      case Hash.digestFromByteString b of
+        Nothing -> pure . Left $ "Could not read sha256 digest from " <> showT fp
+        Just a -> pure . pure $ a
 
 currentStateFolder :: AWBConfig AcidWorldBackendFS -> FilePath
 currentStateFolder c = (aWBConfigFSStateDir $ c) <> "/current"
