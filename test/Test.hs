@@ -11,6 +11,7 @@ import Acid.World
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Tasty.HUnit
+import qualified Data.IxSet.Typed as IxSet
 
 import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Property as QCP
@@ -30,8 +31,12 @@ withBackends f os =
          testGroup ("Serialiser: " <> (T.unpack . serialiserName $ (Proxy :: Proxy s))) $
            f b o
 
-backendsWithSerialisers :: [AppValidBackend] -> [(AppValidBackend, [AppValidSerialiser])]
-backendsWithSerialisers = map (\b -> (b, allSerialisers))
+backendsWithSerialisers :: [AppValidBackend] -> [AppValidSerialiser] -> [(AppValidBackend, [AppValidSerialiser])]
+backendsWithSerialisers bs ser = map (\b -> (b, ser)) bs
+
+
+backendsWithAllSerialisers :: [AppValidBackend] -> [(AppValidBackend, [AppValidSerialiser])]
+backendsWithAllSerialisers bs = backendsWithSerialisers bs allSerialisers
 
 
 main :: IO ()
@@ -41,8 +46,10 @@ main = do
 tests :: TestTree
 tests = testGroup "Tests" $
   map serialiserTests allSerialisers ++
-  withBackends ephemeralBackendTests (backendsWithSerialisers allBackends) ++
-  withBackends persistentBackendTests (backendsWithSerialisers persistentBackends)
+  withBackends ephemeralBackendSerialiserTests (backendsWithAllSerialisers allBackends) ++
+  withBackends persistentBackendSerialiserTests (backendsWithAllSerialisers persistentBackendsWithGzip) ++
+  withBackends persistentBackendConstraintTests (backendsWithSerialisers persistentBackends [defaultAppSerialiser])
+
 
 serialiserTests ::  AppValidSerialiser-> TestTree
 serialiserTests (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) =
@@ -51,20 +58,27 @@ serialiserTests (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) =
     , testProperty "serialiseWrappedEventEqualDeserialise" $ prop_serialiseWrappedEventEqualDeserialise o
     ]
 
-ephemeralBackendTests :: AppValidBackend -> AppValidSerialiser -> [TestTree]
-ephemeralBackendTests (AppValidBackend (bConf :: FilePath -> (AWBConfig b))) (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = [
+ephemeralBackendSerialiserTests :: AppValidBackend -> AppValidSerialiser -> [TestTree]
+ephemeralBackendSerialiserTests (AppValidBackend (bConf :: FilePath -> (AWBConfig b))) (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = [
     testCaseSteps "insertAndFetchState" $ unit_insertAndFetchState bConf o
   ]
 
 
-persistentBackendTests :: AppValidBackend -> AppValidSerialiser -> [TestTree]
-persistentBackendTests (AppValidBackend (bConf :: FilePath -> (AWBConfig b))) (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = [
+persistentBackendSerialiserTests :: AppValidBackend -> AppValidSerialiser -> [TestTree]
+persistentBackendSerialiserTests (AppValidBackend (bConf :: FilePath -> (AWBConfig b))) (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = [
     testCaseSteps "insertAndRestoreState" $ unit_insertAndRestoreState bConf o,
     testCaseSteps "checkpointAndRestoreState" $ unit_checkpointAndRestoreState bConf o,
     testCaseSteps "compositionOfEventsState" $ unit_compositionOfEventsState bConf o
 
   ]
 
+
+persistentBackendConstraintTests :: AppValidBackend -> AppValidSerialiser -> [TestTree]
+persistentBackendConstraintTests (AppValidBackend (bConf :: FilePath -> (AWBConfig b))) (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = [
+    testCaseSteps "validAppConstraintsOnRunEvent" $ unit_validAppConstraintsOnRunEvent bConf o
+  , testCaseSteps "validAppConstraintsOnRestore" $ unit_validAppConstraintsOnRestore bConf o
+
+  ]
 
 genStorableEvent :: QC.Gen (StorableEvent AppSegments AppEvents "insertUser")
 genStorableEvent = do
@@ -168,3 +182,61 @@ unit_compositionOfEventsState b o step = do
   where
     userToPhoneNumber :: User -> Event "insertPhonenumber"
     userToPhoneNumber u = (mkEvent (Proxy :: Proxy ("insertPhonenumber")) $ Phonenumber (userId u) "asdf" 24 False)
+
+
+
+unit_validAppConstraintsOnRunEvent :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => (FilePath -> AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
+unit_validAppConstraintsOnRunEvent b o step = do
+  step "Opening acid world"
+  aw <- openAppAcidWorldFreshWithInvariants b o unitInvariants
+  step "Inserting users"
+  us <- QC.generate $ generateUsers 1000
+  mapM_ (runInsertUser aw) us
+
+  step "Inserting invalid user"
+  u <- QC.generate arbitrary
+
+  res <- update aw (mkEvent (Proxy :: Proxy ("insertUser")) u{userId = 1500, userDisabled = False})
+  us2 <- query aw fetchUsers
+  assertEqual "Expected update to fail" res (Left (AWExceptionInvariantsViolated [("Users", userInvariantFailureMessage)]))
+  assertBool "Fetched user list did not match inserted users" (L.sort us == L.sort us2)
+
+  where
+    unitInvariants :: Invariants AppSegments
+    unitInvariants = putInvariantP (Just userInvariant) emptyInvariants
+    userInvariant :: Invariant AppSegments "Users"
+    userInvariant = Invariant $ \ixset ->
+      if (IxSet.size . IxSet.getEQ False . IxSet.getGT (1400 :: Int) $ ixset) > 0
+        then pure userInvariantFailureMessage
+        else Nothing
+    userInvariantFailureMessage :: Text
+    userInvariantFailureMessage = "All users with an id > 1400 must be enabled"
+
+unit_validAppConstraintsOnRestore :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => (FilePath -> AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
+unit_validAppConstraintsOnRestore b o step = do
+  step "Opening acid world"
+  aw <- openAppAcidWorldFresh b o
+  step "Inserting users"
+  us <- QC.generate $ generateUsers 1000
+  mapM_ (runInsertUser aw) us
+  step "Creating checkpoint"
+  createCheckpoint aw
+  step "Closing acid world"
+  closeAcidWorld aw
+
+  step "Reopening acid world with new invariant"
+  res <- reopenAcidWorld aw{acidWorldInvariants = unitInvariants}
+  case res of
+    Left err -> assertEqual "Expected open from checkpoint to fail" err ((AWExceptionInvariantsViolated [("Users", userInvariantFailureMessage)]))
+    Right _ -> assertFailure "Expected to get an error when opening acid world, but opened successfully"
+
+  where
+    unitInvariants :: Invariants AppSegments
+    unitInvariants = putInvariantP (Just userInvariant) emptyInvariants
+    userInvariant :: Invariant AppSegments "Users"
+    userInvariant = Invariant $ \ixset ->
+      if (IxSet.size ixset) > 800
+        then pure userInvariantFailureMessage
+        else Nothing
+    userInvariantFailureMessage :: Text
+    userInvariantFailureMessage = "Only 800 users are allowed in this segment"

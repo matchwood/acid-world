@@ -43,6 +43,10 @@ type AppValidBackendConstraint b = (
 
   )
 
+
+defaultAppSerialiser :: AppValidSerialiser
+defaultAppSerialiser = AppValidSerialiser AcidSerialiserJSONOptions
+
 allSerialisers :: [AppValidSerialiser]
 allSerialisers = [
     AppValidSerialiser AcidSerialiserJSONOptions
@@ -53,9 +57,14 @@ allSerialisers = [
 
 persistentBackends :: [AppValidBackend]
 persistentBackends = [
-      AppValidBackend $ \t -> AWBConfigFS t False
-    , AppValidBackend $ \t -> AWBConfigFS t True
+      AppValidBackend $ \t -> AWBConfigFS t True
     ]
+
+persistentBackendsWithGzip :: [AppValidBackend]
+persistentBackendsWithGzip = [
+    AppValidBackend $ \t -> AWBConfigFS t False
+  , AppValidBackend $ \t -> AWBConfigFS t True
+  ]
 
 ephemeralBackends :: [AppValidBackend]
 ephemeralBackends = [AppValidBackend $ const AWBConfigMemory]
@@ -102,16 +111,19 @@ openAppAcidWorldRestoreState opts s = do
   t <- mkTempDir
   let e = topLevelStoredStateDir <> "/" <> "testState" <> "/" <> s
   copyDirectory e t
-  aw <- throwEither $ openAcidWorld Nothing (AWBConfigFS t True) AWConfigPureState opts
+  aw <- throwEither $ openAcidWorld defaultSegmentsState emptyInvariants (AWBConfigFS t True) AWConfigPureState opts
   -- this is to force the internal state
   i <- query aw fetchUsersStats
   putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
   pure aw
 
 openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AWBSerialiseT b ~ BL.ByteString, AcidSerialiseConduitT s ~ BS.ByteString, AWBSerialiseConduitT b ~ BS.ByteString, AcidWorldBackend b,  AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => (FilePath -> AWBConfig b) -> (AcidSerialiseEventOptions s) -> IO (AppAW s)
-openAppAcidWorldFresh bConf opts = do
+openAppAcidWorldFresh bConf opts = openAppAcidWorldFreshWithInvariants bConf opts emptyInvariants
+
+openAppAcidWorldFreshWithInvariants :: (AcidSerialiseT s ~ BL.ByteString, AWBSerialiseT b ~ BL.ByteString, AcidSerialiseConduitT s ~ BS.ByteString, AWBSerialiseConduitT b ~ BS.ByteString, AcidWorldBackend b,  AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => (FilePath -> AWBConfig b) -> (AcidSerialiseEventOptions s) -> Invariants AppSegments -> IO (AppAW s)
+openAppAcidWorldFreshWithInvariants bConf opts invars = do
   td <- mkTempDir
-  throwEither $ openAcidWorld Nothing (bConf td) AWConfigPureState opts
+  throwEither $ openAcidWorld defaultSegmentsState invars (bConf td) AWConfigPureState opts
 
 
 type UseGzip = Bool
@@ -141,26 +153,26 @@ insertUsers i iAw = do
 
 
 runInsertUser :: AcidSerialiseConstraint s AppSegments "insertUser" => AppAW s -> User -> IO User
-runInsertUser aw u = update aw (mkEvent (Proxy :: Proxy ("insertUser")) u)
+runInsertUser aw u = throwEither $ update aw (mkEvent (Proxy :: Proxy ("insertUser")) u)
 
 runInsertUserC :: AcidSerialiseConstraintAll s AppSegments '["insertPhonenumber", "insertUser"] => AppAW s -> (User -> Event "insertPhonenumber") -> User -> IO Phonenumber
-runInsertUserC aw mkNumber u = updateC aw $ (mkNumber :<< (EventC $ mkEvent (Proxy :: Proxy ("insertUser")) u))
+runInsertUserC aw mkNumber u = throwEither $ updateC aw $ (mkNumber :<< (EventC $ mkEvent (Proxy :: Proxy ("insertUser")) u))
 
 
 
 runInsertAddress :: AcidSerialiseConstraint s AppSegments "insertAddress" => AppAW s -> Address -> IO Address
-runInsertAddress aw u = update aw (mkEvent (Proxy :: Proxy ("insertAddress")) u)
+runInsertAddress aw u = throwEither $ update aw (mkEvent (Proxy :: Proxy ("insertAddress")) u)
 
 runInsertPhonenumber :: AcidSerialiseConstraint s AppSegments "insertPhonenumber" => AppAW s -> Phonenumber -> IO Phonenumber
-runInsertPhonenumber aw u = update aw (mkEvent (Proxy :: Proxy ("insertPhonenumber")) u)
+runInsertPhonenumber aw u = throwEither $ update aw (mkEvent (Proxy :: Proxy ("insertPhonenumber")) u)
 
 
-throwEither :: IO (Either Text a) -> IO a
+throwEither :: Exception e => IO (Either e a) -> IO a
 throwEither act = do
   res <- act
   case res of
     Right a -> pure a
-    Left err -> throwUserError $ T.unpack err
+    Left e -> throwM e
 
 throwUserError :: String -> IO a
 throwUserError = throwIO . userError

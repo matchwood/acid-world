@@ -30,23 +30,28 @@ import qualified  Data.Vinyl.TypeLevel as V
 the main definition of an state managing strategy
 -}
 
+data AWException =
+    AWExceptionInvariantsViolated [(Text, Text)]
+  | AWExceptionEventDeserialisationError Text
+  | AWExceptionSegmentDeserialisationError Text
+  deriving (Eq, Show, Typeable)
+instance Exception AWException
 
+data Invariant ss s where
+  Invariant :: HasSegment ss s => (SegmentS s -> (Maybe Text)) -> Invariant ss s
 
-data Invariant i ss s where
-  Invariant :: HasSegment ss s => Proxy s -> (SegmentS s -> (Maybe Text)) -> Invariant i ss s
+runInvariant :: forall i ss s. (AcidWorldState i, Functor (AWQuery i ss)) => Invariant ss s -> AWQuery i ss (Maybe Text)
+runInvariant (Invariant f) = fmap f $ askSegment (Proxy :: Proxy s)
 
-runInvariant :: (HasInvariant i ss s, AcidWorldState i, Functor (AWQuery i ss)) => Invariant i ss s -> AWQuery i ss (Maybe Text)
-runInvariant (Invariant p f) = fmap f $ askSegment p
+newtype Invariants ss = Invariants {invariantsFieldRec :: V.AFieldRec (ToInvariantFields ss ss)}
 
-newtype Invariants i ss = Invariants {invariantsFieldRec :: V.AFieldRec (ToInvariantFields i ss ss)}
+class (V.KnownField a, (V.Snd a) ~ Maybe (Invariant ss (V.Fst a))) => KnownInvariantField ss a
+instance (V.KnownField a, (V.Snd a) ~ Maybe (Invariant ss (V.Fst a))) => KnownInvariantField ss a
 
-class (V.KnownField a, (V.Snd a) ~ Maybe (Invariant i ss (V.Fst a))) => KnownInvariantField i ss a
-instance (V.KnownField a, (V.Snd a) ~ Maybe (Invariant i ss (V.Fst a))) => KnownInvariantField i ss a
-
-type ValidInvariantNames i ss =
-  ( V.AllFields (ToInvariantFields i ss ss)
-  , V.AllConstrained (KnownInvariantField i ss) (ToInvariantFields i ss ss)
-  , V.NatToInt (V.RLength (ToInvariantFields i ss ss))
+type ValidInvariantNames ss =
+  ( V.AllFields (ToInvariantFields ss ss)
+  , V.AllConstrained (KnownInvariantField ss) (ToInvariantFields ss ss)
+  , V.NatToInt (V.RLength (ToInvariantFields ss ss))
   , UniqueElementsWithErr ss ~ 'True
   )
 
@@ -54,39 +59,58 @@ type ValidInvariantNames i ss =
 
 
 
-makeEmptyInvariant :: forall i ss a. KnownInvariantField i ss a => Proxy i -> Proxy ss -> V.ElField '(V.Fst a, (V.Snd a))
-makeEmptyInvariant _ _ = (V.Label :: V.Label (V.Fst a)) V.=: Nothing
+makeEmptyInvariant :: forall ss a. KnownInvariantField ss a => Proxy ss -> V.ElField '(V.Fst a, (V.Snd a))
+makeEmptyInvariant _ = (V.Label :: V.Label (V.Fst a)) V.=: Nothing
 
-emptyInvariants :: forall i ss. ValidInvariantNames i ss => Invariants i ss
-emptyInvariants = Invariants $ V.toARec $ V.rpureConstrained (Proxy :: Proxy (KnownInvariantField i ss))  (makeEmptyInvariant (Proxy :: Proxy i) (Proxy :: Proxy ss))
+emptyInvariants :: forall ss. ValidInvariantNames ss => Invariants ss
+emptyInvariants = Invariants $ V.toARec $ V.rpureConstrained (Proxy :: Proxy (KnownInvariantField ss))  (makeEmptyInvariant (Proxy :: Proxy ss))
 
-type family ToInvariantFields i (allSS :: [Symbol]) (ss :: [Symbol]) = (iFields :: [(Symbol, *)]) where
-  ToInvariantFields _ _ '[] = '[]
-  ToInvariantFields i allSS (s ': ss) = '(s, Maybe (Invariant i allSS s)) ': ToInvariantFields i allSS ss
+type family ToInvariantFields (allSS :: [Symbol]) (ss :: [Symbol]) = (iFields :: [(Symbol, *)]) where
+  ToInvariantFields _ '[] = '[]
+  ToInvariantFields allSS (s ': ss) = '(s, Maybe (Invariant allSS s)) ': ToInvariantFields allSS ss
 
 
-class (V.HasField V.ARec s (ToInvariantFields i ss ss) (Maybe (Invariant i ss s)), KnownSymbol s) => HasInvariant i ss s
-instance (V.HasField V.ARec s (ToInvariantFields i ss ss) (Maybe (Invariant i ss s)), KnownSymbol s) => HasInvariant i ss s
+class (V.HasField V.ARec s (ToInvariantFields ss ss) (Maybe (Invariant ss s)), KnownSymbol s) => HasInvariant ss s
+instance (V.HasField V.ARec s (ToInvariantFields ss ss) (Maybe (Invariant ss s)), KnownSymbol s) => HasInvariant ss s
 
 class (
-        All (HasInvariant i ss) ss)
-      => ValidInvariants i ss
+        All (HasInvariant ss) ss)
+      => ValidInvariants ss
 instance (
-        All (HasInvariant i ss) ss)
-      => ValidInvariants i ss
+        All (HasInvariant ss) ss)
+      => ValidInvariants ss
 
-type HasValidSegment i ss s = (HasSegment ss s, HasInvariant i ss s)
+class (HasSegment ss s, HasInvariant ss s) => HasSegmentAndInvar ss s
+instance (HasSegment ss s, HasInvariant ss s) => HasSegmentAndInvar ss s
 
-getInvariantP :: forall i s ss. (HasInvariant i ss s) => Proxy s ->  Invariants i ss -> Maybe (Invariant i ss s)
-getInvariantP _ (Invariants fr) = V.getField $ V.rgetf (V.Label :: V.Label s) fr
+getInvariantP :: forall s ss. (HasInvariant ss s) => Invariants ss -> Maybe (Invariant ss s)
+getInvariantP (Invariants fr) = V.getField $ V.rgetf (V.Label :: V.Label s) fr
 
-type ValidSegmentsAndInvar i ss = (ValidSegments ss, ValidInvariants i ss)
+putInvariantP :: forall s ss. (HasInvariant ss s) =>  Maybe (Invariant ss s) -> Invariants ss -> Invariants ss
+putInvariantP invar (Invariants fr) = Invariants $ V.rputf (V.Label :: V.Label s) invar fr
+
+type ValidSegmentsAndInvar ss = (ValidSegments ss, ValidInvariants ss)
 
 
 type ChangedSegmentsInvariantsMap i ss = HM.HashMap Text (AWQuery i ss (Maybe Text))
 
-runChangedSegmentsInvariantsMap :: forall i ss. ValidAcidWorldState i ss => ChangedSegmentsInvariantsMap i ss -> AWQuery i ss (Maybe [(Text, Text)])
-runChangedSegmentsInvariantsMap hm = foldM doRunInvariant Nothing (HM.toList hm)
+allInvariants :: forall ss i. (All (HasInvariant ss) ss, AcidWorldState i, Functor (AWQuery i ss)) => Invariants ss -> ChangedSegmentsInvariantsMap i ss
+allInvariants invars = HM.fromList $ cfoldMap_NP (Proxy :: Proxy (HasInvariant ss)) mInsertInvar npInvars
+  where
+    mInsertInvar :: forall s. (HasInvariant ss s) => Proxy s -> [(Text, AWQuery i ss (Maybe Text))]
+    mInsertInvar ps =
+      case getInvariantP invars of
+        Nothing -> []
+        Just (i :: Invariant ss s) -> [(toUniqueText ps, runInvariant i)]
+    npInvars :: NP Proxy ss
+    npInvars = pure_NP Proxy
+
+
+registerChangedSegment :: forall ss s i. (HasSegment ss s, AcidWorldState i, Functor (AWQuery i ss)) => Invariant ss s -> ChangedSegmentsInvariantsMap i ss -> ChangedSegmentsInvariantsMap i ss
+registerChangedSegment i = HM.insert (toUniqueText (Proxy :: Proxy s)) (runInvariant i)
+
+runChangedSegmentsInvariantsMap :: forall i ss. ValidAcidWorldState i ss => ChangedSegmentsInvariantsMap i ss -> AWQuery i ss (Maybe AWException)
+runChangedSegmentsInvariantsMap hm = (fmap . fmap) AWExceptionInvariantsViolated $ foldM doRunInvariant Nothing (HM.toList hm)
   where
     doRunInvariant ::(Maybe [(Text, Text)]) -> (Text, AWQuery i ss (Maybe Text)) -> AWQuery i ss (Maybe [(Text, Text)])
     doRunInvariant res (k, act) = do
@@ -103,35 +127,31 @@ class AcidWorldState (i :: *) where
   data AWConfig i (ss :: [Symbol])
   data AWUpdate i (ss :: [Symbol]) a
   data AWQuery i (ss :: [Symbol]) a
-  initialiseState :: (MonadIO z, ValidSegmentsAndInvar i ss) => AWConfig i ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState i ss))
+  initialiseState :: (MonadIO z, ValidSegmentsAndInvar ss) => AWConfig i ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> Invariants ss -> z (Either AWException (AWState i ss))
   closeState :: (MonadIO z) => AWState i ss -> z ()
   closeState _ = pure ()
   getSegment :: (HasSegment ss s) =>  Proxy s -> AWUpdate i ss (SegmentS s)
-  putSegment :: (HasSegment ss s, HasInvariant i ss s, ValidSegmentsAndInvar i ss) =>  Proxy s -> (SegmentS s) -> AWUpdate i ss ()
+  putSegment :: (HasSegment ss s, HasInvariant ss s, ValidSegmentsAndInvar ss ) =>  Proxy s -> (SegmentS s) -> AWUpdate i ss ()
   askSegment :: (HasSegment ss s) =>  Proxy s -> AWQuery i ss (SegmentS s)
-  runUpdateC :: (ValidSegmentsAndInvar i ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState i ss -> EventC (firstN ': ns) -> m (NP Event (firstN ': ns), EventResult firstN)
+  runUpdateC :: (ValidSegmentsAndInvar ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState i ss -> EventC (firstN ': ns) -> m (Either AWException (NP Event (firstN ': ns), EventResult firstN))
   runQuery :: (MonadIO m) => AWState i ss -> AWQuery i ss a -> m a
   liftQuery :: AWQuery i ss a -> AWUpdate i ss a
 
 
 
-
-
-
+type HasSegmentsAndInvars allSegmentNames segmentNames = V.AllConstrained (HasSegmentAndInvar allSegmentNames) segmentNames
 
 
 
 class ( AcidWorldState i
       , Monad (AWUpdate i ss)
       , Monad (AWQuery i ss)
-      , ValidSegments ss
-      , ValidInvariants i ss)
+      , ValidSegmentsAndInvar ss)
       => ValidAcidWorldState i ss
 instance ( AcidWorldState i
       , Monad (AWUpdate i ss)
       , Monad (AWQuery i ss)
-      , ValidSegments ss
-      , ValidInvariants i ss)
+      , ValidSegmentsAndInvar ss)
       => ValidAcidWorldState i ss
 
 
@@ -153,7 +173,7 @@ askSegmentsState = fmap npToSegmentsState askStateNp
 
 data BackendHandles m ss nn = BackendHandles {
     bhLoadEvents :: forall i. MonadIO m => m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),
-    bhGetLastCheckpointState :: MonadIO m => m ((Either Text (Maybe (SegmentsState ss))))
+    bhGetLastCheckpointState :: MonadIO m => m ((Either AWException (Maybe (SegmentsState ss))))
   }
 
 
@@ -180,11 +200,11 @@ runEventC ((:<<) f ec) = do
 
 
 
-class (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss (n :: Symbol)
-instance (Eventable n, HasSegments ss (EventSegments n)) => ValidEventName ss n
+class (Eventable n, HasSegmentsAndInvars ss (EventSegments n)) => ValidEventName ss (n :: Symbol)
+instance (Eventable n, HasSegmentsAndInvars ss (EventSegments n)) => ValidEventName ss n
 
-class (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsValidEvent ss nn (n :: Symbol)
-instance (ElemOrErr n nn, Eventable n, HasSegments ss (EventSegments n)) => IsValidEvent ss nn n
+class (ElemOrErr n nn, Eventable n, HasSegmentsAndInvars ss (EventSegments n)) => IsValidEvent ss nn (n :: Symbol)
+instance (ElemOrErr n nn, Eventable n, HasSegmentsAndInvars ss (EventSegments n)) => IsValidEvent ss nn n
 
 
 
@@ -204,7 +224,7 @@ class (ToUniqueText n, SListI (EventArgs n), All Eq (EventArgs n), All Show (Eve
   type EventArgs n :: [*]
   type EventResult n :: *
   type EventSegments n :: [Symbol]
-  runEvent :: (ValidAcidWorldState i ss, HasSegments ss (EventSegments n)) => Proxy n -> EventArgsContainer (EventArgs n) -> AWUpdate i ss (EventResult n)
+  runEvent :: (ValidAcidWorldState i ss, HasSegmentsAndInvars ss (EventSegments n)) => Proxy n -> EventArgsContainer (EventArgs n) -> AWUpdate i ss (EventResult n)
 
 
 
@@ -259,7 +279,7 @@ mkStorableEvent e = do
   return $ StorableEvent t (EventId uuid) e
 
 data WrappedEvent ss nn where
-  WrappedEvent :: (HasSegments ss (EventSegments n)) => StorableEvent ss nn n -> WrappedEvent ss nn
+  WrappedEvent :: (HasSegmentsAndInvars ss (EventSegments n)) => StorableEvent ss nn n -> WrappedEvent ss nn
 
 instance Show (WrappedEvent ss nn) where
   show (WrappedEvent se) = "WrappedEvent: " <> show se

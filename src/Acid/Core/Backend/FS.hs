@@ -27,6 +27,8 @@ import Acid.Core.Serialise.Abstract
 import Conduit
 import Data.Conduit.Zlib
 import Control.Monad.ST.Trans
+import Control.Arrow (left)
+
 data AcidWorldBackendFS
 
 
@@ -58,7 +60,7 @@ instance AcidWorldBackend AcidWorldBackendFS where
   backendConfigInfo c = "Gzip: " <> showT (aWBConfigGzip c)
   type AWBSerialiseT AcidWorldBackendFS = BL.ByteString
   type AWBSerialiseConduitT AcidWorldBackendFS = BS.ByteString
-  initialiseBackend _ c _  = do
+  initialiseBackend c  = do
     stateP <- Dir.makeAbsolute (aWBConfigFSStateDir c)
     Dir.createDirectoryIfMissing True stateP
     let eventPath = makeEventPath c
@@ -83,7 +85,7 @@ instance AcidWorldBackend AcidWorldBackendFS where
     if doesExist
       then do
         let middleware = if (aWBConfigGzip  . aWBStateFSConfig $ s) then ungzip else awaitForever $ yield
-        readLastCheckpointState middleware ps (aWBStateFSConfig s) t
+        fmap (left AWExceptionSegmentDeserialisationError) $ readLastCheckpointState middleware ps (aWBStateFSConfig s) t
       else pure . pure $ Nothing
 
   closeBackend s = modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
@@ -98,12 +100,12 @@ instance AcidWorldBackend AcidWorldBackendFS where
 
   -- this should be bracketed and restored correctly, including bracketing the io action. Also the IO action should perhaps be restricted (if it loops to this then there will be trouble!). we also need a way to undo writing the event to the file if the io action fails
   handleUpdateEventC serializer s awu ec act = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
-    (es, r) <- runUpdateC awu ec
-    stEs <- mkStorableEvents es
-    BL.hPut hdl $ serializer stEs
-    hFlush hdl
-    ioR <- act r
-    pure (r, ioR)
+    eBind (runUpdateC awu ec) $ \(es, r) -> do
+        stEs <- mkStorableEvents es
+        BL.hPut hdl $ serializer stEs
+        hFlush hdl
+        ioR <- act r
+        pure . Right $ (r, ioR)
 
 
 

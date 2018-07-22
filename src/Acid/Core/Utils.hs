@@ -17,6 +17,14 @@ import Generics.SOP.NP
 import qualified Generics.SOP as SOP
 
 
+eBind :: (Monad m) => m (Either a b) -> (b -> m (Either a c)) -> m (Either a c)
+eBind  act f = do
+  r <- act
+  case r of
+    Left e -> pure $ Left e
+    Right b -> f b
+
+
 class ToUniqueText (a :: k) where
   toUniqueText :: Proxy a -> Text
 

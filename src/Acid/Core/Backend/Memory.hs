@@ -9,6 +9,7 @@ import qualified  RIO.ByteString.Lazy as BL
 
 
 import Acid.Core.State
+import Acid.Core.Utils
 import Acid.Core.Backend.Abstract
 
 data AcidWorldBackendMemory
@@ -22,9 +23,8 @@ instance AcidWorldBackend AcidWorldBackendMemory where
   data AWBConfig AcidWorldBackendMemory = AWBConfigMemory deriving Show
   type AWBSerialiseT AcidWorldBackendMemory = BL.ByteString
   type AWBSerialiseConduitT AcidWorldBackendMemory = BS.ByteString
-  initialiseBackend _ _ _  = pure . pure $ AWBStateMemory
-  handleUpdateEventC _ _ awu ec act = do
-   (_, r) <- runUpdateC awu ec
-   ioR <- act r
-   pure (r, ioR)
+  initialiseBackend _   = pure . pure $ AWBStateMemory
+  handleUpdateEventC _ _ awu ec act = eBind (runUpdateC awu ec) $ \(_, r) -> do
+     ioR <- act r
+     pure . Right $ (r, ioR)
 

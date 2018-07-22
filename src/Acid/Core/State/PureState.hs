@@ -11,7 +11,6 @@ import qualified Control.Concurrent.STM.TVar as  TVar
 import qualified Control.Concurrent.STM  as STM
 
 import Acid.Core.Segment
-import Acid.Core.Utils
 import Acid.Core.State.Abstract
 import Conduit
 
@@ -22,40 +21,45 @@ data AcidStatePureState
 
 instance AcidWorldState AcidStatePureState where
   data AWState AcidStatePureState ss = AWStatePureState {
-      aWStatePureStateState :: !(TVar (SegmentsState ss))
+      aWStatePureStateState :: !(TVar (SegmentsState ss)),
+      awStatePureStateInvariants :: Invariants ss
     }
   data AWConfig AcidStatePureState ss = AWConfigPureState
 
-  newtype AWUpdate AcidStatePureState ss a = AWUpdatePureState {runAWUpdatePureState :: Re.ReaderT (Invariants AcidStatePureState ss) (St.StateT (ChangedSegmentsInvariantsMap AcidStatePureState  ss) (St.State (SegmentsState ss))) a}
+  newtype AWUpdate AcidStatePureState ss a = AWUpdatePureState {extractAWUpdatePureState :: Re.ReaderT (Invariants ss) (St.StateT (ChangedSegmentsInvariantsMap AcidStatePureState  ss) (St.State (SegmentsState ss))) a}
     deriving (Functor, Applicative, Monad)
   newtype AWQuery AcidStatePureState ss a = AWQueryPureState (Re.Reader (SegmentsState ss) a)
     deriving (Functor, Applicative, Monad)
   getSegment ps = AWUpdatePureState . lift . lift $ getSegmentP ps `fmap` St.get
 
-  putSegment ps seg = AWUpdatePureState $ do
+  putSegment (ps :: Proxy s) seg = AWUpdatePureState $ do
     invariants <- ask
-    _ <-
-      case getInvariantP ps invariants of
-        Nothing -> pure ()
-        Just invar -> lift (St.modify' (HM.insert (toUniqueText ps) (runInvariant invar)))
+    case getInvariantP invariants of
+      Nothing -> pure ()
+      Just (invar :: Invariant ss s) -> lift (St.modify' (registerChangedSegment invar))
 
     lift . lift $ St.modify' (putSegmentP ps seg)
   askSegment ps = AWQueryPureState $ getSegmentP ps `fmap` Re.ask
-  initialiseState :: forall z ss nn. (MonadIO z,  ValidSegmentsAndInvar AcidStatePureState ss) => AWConfig AcidStatePureState ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState AcidStatePureState ss))
-  initialiseState _ (BackendHandles{..}) defState = do
+  initialiseState :: forall z ss nn. (MonadIO z,  ValidSegmentsAndInvar ss) => AWConfig AcidStatePureState ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> (Invariants ss) -> z (Either AWException (AWState AcidStatePureState ss))
+  initialiseState _ (BackendHandles{..}) defState invars = do
     mCpState <- bhGetLastCheckpointState
 
     case mCpState of
-      (Left err) -> pure $ Left err
+      (Left err) -> pure . Left  $ err
       Right cpState -> do
         let startState = fromMaybe defState cpState
         weStream <- bhLoadEvents
         eS <- liftIO $ runConduitRes $ weStream .| breakOnLeft applyToState startState
         case eS of
-          Left err -> pure $ Left err
+          Left err -> pure . Left . AWExceptionEventDeserialisationError $ err
           Right s -> do
-            tvar <- liftIO $ STM.atomically $ TVar.newTVar s
-            pure . pure $ AWStatePureState tvar
+
+            -- run invariants
+            case runAWQueryPureState (runChangedSegmentsInvariantsMap (allInvariants invars)) s of
+              Nothing -> do
+                tvar <- liftIO $ STM.atomically $ TVar.newTVar s
+                pure . pure $ AWStatePureState tvar invars
+              Just err -> pure . Left $ err
     where
       breakOnLeft :: (Monad m) => (s -> a -> s) -> s -> ConduitT (Either Text a) o m (Either Text s)
       breakOnLeft f = loop
@@ -65,22 +69,33 @@ instance AcidWorldState AcidStatePureState where
               go (Left err) = pure (Left err)
               go (Right a) = loop (f s a)
       applyToState :: SegmentsState ss -> WrappedEvent ss nn -> SegmentsState ss
-      applyToState s e =
-        let (AWUpdatePureState stm) = runWrappedEvent e
-        in snd $ St.runState (St.runStateT (Re.runReaderT stm undefined) HM.empty) s
-  runUpdateC :: forall ss firstN ns m. (ValidAcidWorldState AcidStatePureState ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState AcidStatePureState ss -> EventC (firstN ': ns) -> m (NP Event (firstN ': ns), EventResult firstN)
+      applyToState s e = snd $ runAWUpdatePureState (runWrappedEvent e) s invars
+
+  runUpdateC :: forall ss firstN ns m. (ValidAcidWorldState AcidStatePureState ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState AcidStatePureState ss -> EventC (firstN ': ns) ->  m (Either AWException (NP Event (firstN ': ns), EventResult firstN))
   runUpdateC awState ec = liftIO $ STM.atomically $ do
-    let stm = runAWUpdatePureState $ runEventC ec
     s <- STM.readTVar (aWStatePureStateState awState)
-    (((!a, !b), !modS), !s') <- pure $ St.runState (St.runStateT (Re.runReaderT stm undefined) HM.empty) s
-    STM.writeTVar (aWStatePureStateState awState) s'
-    return (a, b)
+    let (((!events, !eventResult), !invarsToRun), !s') = runAWUpdatePureState (runEventC ec) s (awStatePureStateInvariants awState)
+
+    case runAWQueryPureState (runChangedSegmentsInvariantsMap invarsToRun) s' of
+      Nothing -> do
+        STM.writeTVar (aWStatePureStateState awState) s'
+        pure . Right $ (events, eventResult)
+      Just errs -> pure . Left $ errs
 
 
-  runQuery awState (AWQueryPureState q) = do
+  runQuery awState q = do
     liftIO $ STM.atomically $ do
       s <- STM.readTVar (aWStatePureStateState awState)
-      pure $ Re.runReader q s
-  liftQuery (AWQueryPureState q) = do
+      pure $ runAWQueryPureState q s
+  liftQuery q = do
     s <- AWUpdatePureState . lift . lift $ St.get
-    pure $ Re.runReader q s
+    pure $ runAWQueryPureState q s
+
+
+runAWQueryPureState :: AWQuery AcidStatePureState ss a -> SegmentsState ss -> a
+runAWQueryPureState (AWQueryPureState q) s = Re.runReader q s
+
+runAWUpdatePureState :: AWUpdate AcidStatePureState ss a -> SegmentsState ss -> Invariants ss -> ((a, ChangedSegmentsInvariantsMap AcidStatePureState ss), SegmentsState ss)
+runAWUpdatePureState act s i =
+  let stm = extractAWUpdatePureState act
+  in St.runState (St.runStateT (Re.runReaderT stm i)  HM.empty) s
