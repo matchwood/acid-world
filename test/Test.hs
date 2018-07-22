@@ -198,7 +198,7 @@ unit_validAppConstraintsOnRunEvent b o step = do
 
   res <- update aw (mkEvent (Proxy :: Proxy ("insertUser")) u{userId = 1500, userDisabled = False})
   us2 <- query aw fetchUsers
-  assertEqual "Expected update to fail" res (Left (AWExceptionInvariantsViolated [("Users", userInvariantFailureMessage)]))
+  assertEqual "Expected update to fail" (Left (AWExceptionInvariantsViolated [("Users", userInvariantFailureMessage)])) res
   assertBool "Fetched user list did not match inserted users" (L.sort us == L.sort us2)
 
   where
@@ -227,7 +227,7 @@ unit_validAppConstraintsOnRestore b o step = do
   step "Reopening acid world with new invariant"
   res <- reopenAcidWorld aw{acidWorldInvariants = unitInvariants}
   case res of
-    Left err -> assertEqual "Expected open from checkpoint to fail" err ((AWExceptionInvariantsViolated [("Users", userInvariantFailureMessage)]))
+    Left err -> assertEqual "Expected open from checkpoint to fail" ((AWExceptionInvariantsViolated [("Users", userInvariantFailureMessage)])) err
     Right _ -> assertFailure "Expected to get an error when opening acid world, but opened successfully"
 
   where

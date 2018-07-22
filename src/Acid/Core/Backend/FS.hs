@@ -28,9 +28,13 @@ import Conduit
 import Data.Conduit.Zlib
 import Control.Monad.ST.Trans
 import Control.Arrow (left)
+import qualified Crypto.Hash as Hash
+import qualified Data.ByteArray.Encoding as BA
 
 data AcidWorldBackendFS
 
+sha256 :: BL.ByteString -> Hash.Digest Hash.SHA256
+sha256 = Hash.hashlazy
 
 -- @todo add exception handling?
 withTMVar :: (MonadIO m) => TMVar a -> (a -> m b) -> m b
@@ -62,11 +66,13 @@ instance AcidWorldBackend AcidWorldBackendFS where
   type AWBSerialiseConduitT AcidWorldBackendFS = BS.ByteString
   initialiseBackend c  = do
     stateP <- Dir.makeAbsolute (aWBConfigFSStateDir c)
-    Dir.createDirectoryIfMissing True stateP
-    let eventPath = makeEventPath c
+    let finalConf = c{aWBConfigFSStateDir = stateP}
+    let currentS = currentStateFolder finalConf
+    Dir.createDirectoryIfMissing True currentS
+    let eventPath = makeEventPath finalConf
     hdl <- liftIO $ openBinaryFile eventPath ReadWriteMode
     hdlV <- liftIO $ STM.atomically $ newTMVar hdl
-    pure . pure $ AWBStateFS c{aWBConfigFSStateDir = stateP} hdlV
+    pure . pure $ AWBStateFS finalConf hdlV
   createCheckpointBackend s awu t = do
     sToWrite <- modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
       let eventPath = makeEventPath (aWBStateFSConfig s)
@@ -80,12 +86,12 @@ instance AcidWorldBackend AcidWorldBackendFS where
 
 
   getLastCheckpointState ps s t = do
-    let cpFolder = (aWBConfigFSStateDir . aWBStateFSConfig $ s) <> "/checkpoint"
+    let cpFolder = currentCheckpointFolder (aWBStateFSConfig $ s)
     doesExist <- Dir.doesDirectoryExist cpFolder
     if doesExist
       then do
         let middleware = if (aWBConfigGzip  . aWBStateFSConfig $ s) then ungzip else awaitForever $ yield
-        fmap (left AWExceptionSegmentDeserialisationError) $ readLastCheckpointState middleware ps (aWBStateFSConfig s) t
+        fmap (left AWExceptionSegmentDeserialisationError) $ readLastCheckpointState middleware ps s t
       else pure . pure $ Nothing
 
   closeBackend s = modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
@@ -111,23 +117,36 @@ instance AcidWorldBackend AcidWorldBackendFS where
 
 writeCheckpoint :: forall t sFields m. (AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, MonadThrow m, PrimMonad m, All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()
 writeCheckpoint s t np = do
-  let cpFolder = (aWBConfigFSStateDir . aWBStateFSConfig $ s) <> "/checkpoint"
+  let cpFolder = currentCheckpointFolder (aWBStateFSConfig $ s)
   Dir.createDirectoryIfMissing True cpFolder
   let middleware = if (aWBConfigGzip  . aWBStateFSConfig $ s) then gzip else awaitForever $ yield
-  let acts =  cfoldMap_NP (Proxy :: Proxy (AcidSerialiseSegmentFieldConstraint t)) ((:[]) . writeSegment middleware (aWBStateFSConfig s) t) np
+  let acts =  cfoldMap_NP (Proxy :: Proxy (AcidSerialiseSegmentFieldConstraint t)) ((:[]) . writeSegment middleware s t) np
   mapConcurrently_ id acts
 
-writeSegment :: forall t m fs. (AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, AcidSerialiseSegmentFieldConstraint t fs) => ConduitT ByteString ByteString (ResourceT m) () -> AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> V.ElField fs -> m ()
-writeSegment middleware c t ((V.Field seg)) = runConduitRes $
-  serialiseSegment t seg .|
-  middleware .|
-  sinkFileCautious (makeSegmentPath c (Proxy :: Proxy (V.Fst fs)))
+writeSegment :: forall t m fs. (AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, AcidSerialiseSegmentFieldConstraint t fs) => ConduitT ByteString ByteString (ResourceT m) () -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> V.ElField fs -> m ()
+writeSegment middleware s t ((V.Field seg)) = do
+  let segPath = makeSegmentPath (aWBStateFSConfig $ s) (Proxy :: Proxy (V.Fst fs))
+  runConduitRes $
+    serialiseSegment t seg .|
+    middleware .|
+    sinkFileCautious segPath
+  writeSegmentCheckFile
+  where
+    writeSegmentCheckFile :: m ()
+    writeSegmentCheckFile = do
+      let segPath = makeSegmentPath (aWBStateFSConfig $ s) (Proxy :: Proxy (V.Fst fs))
+          segCheckPath = makeSegmentCheckPath (aWBStateFSConfig $ s) (Proxy :: Proxy (V.Fst fs))
+      hash <- fmap sha256 $ BL.readFile segPath
+      -- @ todo redo this with the hashing process inside the conduit reading from the file
+      runConduitRes $
+        sourceLazy (BL.fromStrict $ BA.convertToBase BA.Base64 hash ) .|
+        sinkFile segCheckPath
 
 
 
 
-readLastCheckpointState :: forall ss m t. (ValidSegmentsSerialise t ss,  MonadUnliftIO m, AcidSerialiseConduitT t ~ BS.ByteString) =>  ConduitT ByteString ByteString (ResourceT m) () -> Proxy ss -> AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either Text (Maybe (SegmentsState ss)))
-readLastCheckpointState middleware _ c t = (fmap . fmap) (Just . npToSegmentsState) segsNpE
+readLastCheckpointState :: forall ss m t. (ValidSegmentsSerialise t ss,  MonadUnliftIO m, AcidSerialiseConduitT t ~ BS.ByteString) =>  ConduitT ByteString ByteString (ResourceT m) () -> Proxy ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either Text (Maybe (SegmentsState ss)))
+readLastCheckpointState middleware _ s t = (fmap . fmap) (Just . npToSegmentsState) segsNpE
 
   where
     segsNpE :: m (Either Text (NP V.ElField (ToSegmentFields ss)))
@@ -137,8 +156,17 @@ readLastCheckpointState middleware _ c t = (fmap . fmap) (Just . npToSegmentsSta
     readSegmentFromProxy :: forall a b. (AcidSerialiseSegmentFieldConstraint t '(a, b), b ~ SegmentS a) => Proxy '(a, b) -> ((Concurrently m :.: Either Text) :.: V.ElField) '(a, b)
     readSegmentFromProxy _ =  Comp $  fmap V.Field $  Comp $ readSegment (Proxy :: Proxy a)
     readSegment :: forall sName. (AcidSerialiseSegmentNameConstraint t sName) => Proxy sName -> Concurrently m (Either Text (SegmentS sName))
-    readSegment ps = Concurrently $ runResourceT $ runSTT $ runConduit $
-        transPipe lift (sourceFile $ makeSegmentPath c ps ) .|
+    readSegment ps = Concurrently $ do
+      -- @ todo redo this with the hashing process inside a conduit reading from the file
+
+      let segPath = makeSegmentPath (aWBStateFSConfig $ s) ps
+          segCheckPath = makeSegmentCheckPath (aWBStateFSConfig $ s) ps
+      hash <- fmap (BA.convertToBase BA.Base64 . sha256) $ BL.readFile segPath
+      checkHash <- BS.readFile segCheckPath
+      if hash /= (checkHash)
+        then pure . Left $ "Invalid checkpoint - check file ("  <> showT segCheckPath <> ": " <> showT checkHash <> ") did not match hash of segment file" <> "(" <> showT segPath <> ": " <>  showT hash <> ")" <> " when reading segment *" <> toUniqueText ps <> "*"
+        else runResourceT $ runSTT $ runConduit $
+        transPipe lift (sourceFile $ makeSegmentPath (aWBStateFSConfig $ s) ps ) .|
         transPipe lift middleware .|
         deserialiseSegment t
 
@@ -146,12 +174,19 @@ readLastCheckpointState middleware _ c t = (fmap . fmap) (Just . npToSegmentsSta
     proxyNp = pure_NP Proxy
 
 
+currentStateFolder :: AWBConfig AcidWorldBackendFS -> FilePath
+currentStateFolder c = (aWBConfigFSStateDir $ c) <> "/current"
 
-
+currentCheckpointFolder :: AWBConfig AcidWorldBackendFS -> FilePath
+currentCheckpointFolder c = currentStateFolder c <> "/checkpoint"
 
 makeSegmentPath :: (Segment sName) => AWBConfig AcidWorldBackendFS ->  Proxy sName -> FilePath
-makeSegmentPath c ps = (aWBConfigFSStateDir c) <> "/checkpoint/" <> T.unpack (toUniqueText ps) <> if aWBConfigGzip c then ".gz" else ""
+makeSegmentPath c ps = currentCheckpointFolder c <> "/" <> T.unpack (toUniqueText ps) <> if aWBConfigGzip c then ".gz" else ""
+
+makeSegmentCheckPath :: (Segment sName) => AWBConfig AcidWorldBackendFS ->  Proxy sName -> FilePath
+makeSegmentCheckPath c ps = makeSegmentPath c ps <> ".check"
+
 
 
 makeEventPath :: AWBConfig AcidWorldBackendFS -> FilePath
-makeEventPath c = (aWBConfigFSStateDir c) <> "/" <> "events"
+makeEventPath c = currentStateFolder c <> "/" <> "events"

@@ -48,7 +48,9 @@ library
     cereal,
     zlib,
     STMonadTrans,
-    attoparsec
+    attoparsec,
+    cryptonite,
+    memory
 
 
   hs-source-dirs:      src
