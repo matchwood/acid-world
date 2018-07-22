@@ -5,11 +5,13 @@ import RIO
 import Generics.SOP
 import qualified Control.Monad.State.Strict as St
 import qualified Control.Monad.Reader as Re
+import qualified  RIO.HashMap as HM
 
 import qualified Control.Concurrent.STM.TVar as  TVar
 import qualified Control.Concurrent.STM  as STM
 
 import Acid.Core.Segment
+import Acid.Core.Utils
 import Acid.Core.State.Abstract
 import Conduit
 
@@ -24,15 +26,22 @@ instance AcidWorldState AcidStatePureState where
     }
   data AWConfig AcidStatePureState ss = AWConfigPureState
 
-  newtype AWUpdate AcidStatePureState ss a = AWUpdatePureState {runAWUpdatePureState :: (St.State (SegmentsState ss) a)}
+  newtype AWUpdate AcidStatePureState ss a = AWUpdatePureState {runAWUpdatePureState :: Re.ReaderT (Invariants AcidStatePureState ss) (St.StateT (ChangedSegmentsInvariantsMap AcidStatePureState  ss) (St.State (SegmentsState ss))) a}
     deriving (Functor, Applicative, Monad)
   newtype AWQuery AcidStatePureState ss a = AWQueryPureState (Re.Reader (SegmentsState ss) a)
     deriving (Functor, Applicative, Monad)
-  getSegment ps = AWUpdatePureState $ getSegmentP ps `fmap` St.get
+  getSegment ps = AWUpdatePureState . lift . lift $ getSegmentP ps `fmap` St.get
 
-  putSegment ps seg = AWUpdatePureState $ St.modify' (putSegmentP ps seg)
+  putSegment ps seg = AWUpdatePureState $ do
+    invariants <- ask
+    _ <-
+      case getInvariantP ps invariants of
+        Nothing -> pure ()
+        Just invar -> lift (St.modify' (HM.insert (toUniqueText ps) (runInvariant invar)))
+
+    lift . lift $ St.modify' (putSegmentP ps seg)
   askSegment ps = AWQueryPureState $ getSegmentP ps `fmap` Re.ask
-  initialiseState :: forall z ss nn. (MonadIO z,  ValidSegments ss) => AWConfig AcidStatePureState ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState AcidStatePureState ss))
+  initialiseState :: forall z ss nn. (MonadIO z,  ValidSegmentsAndInvar AcidStatePureState ss) => AWConfig AcidStatePureState ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState AcidStatePureState ss))
   initialiseState _ (BackendHandles{..}) defState = do
     mCpState <- bhGetLastCheckpointState
 
@@ -58,14 +67,14 @@ instance AcidWorldState AcidStatePureState where
       applyToState :: SegmentsState ss -> WrappedEvent ss nn -> SegmentsState ss
       applyToState s e =
         let (AWUpdatePureState stm) = runWrappedEvent e
-        in snd $ St.runState stm s
+        in snd $ St.runState (St.runStateT (Re.runReaderT stm undefined) HM.empty) s
   runUpdateC :: forall ss firstN ns m. (ValidAcidWorldState AcidStatePureState ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState AcidStatePureState ss -> EventC (firstN ': ns) -> m (NP Event (firstN ': ns), EventResult firstN)
   runUpdateC awState ec = liftIO $ STM.atomically $ do
     let stm = runAWUpdatePureState $ runEventC ec
     s <- STM.readTVar (aWStatePureStateState awState)
-    (!a, !s') <- pure $ St.runState stm s
+    (((!a, !b), !modS), !s') <- pure $ St.runState (St.runStateT (Re.runReaderT stm undefined) HM.empty) s
     STM.writeTVar (aWStatePureStateState awState) s'
-    return a
+    return (a, b)
 
 
   runQuery awState (AWQueryPureState q) = do
@@ -73,5 +82,5 @@ instance AcidWorldState AcidStatePureState where
       s <- STM.readTVar (aWStatePureStateState awState)
       pure $ Re.runReader q s
   liftQuery (AWQueryPureState q) = do
-    s <- AWUpdatePureState St.get
+    s <- AWUpdatePureState . lift . lift $ St.get
     pure $ Re.runReader q s

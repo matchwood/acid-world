@@ -7,6 +7,7 @@ import RIO
 import qualified  RIO.Text as T
 import qualified  RIO.List as L
 import qualified  RIO.Time as Time
+import qualified  RIO.HashMap as HM
 
 import Generics.SOP
 import Generics.SOP.NP
@@ -21,7 +22,7 @@ import Acid.Core.Utils
 import Data.Aeson(FromJSON(..), ToJSON(..))
 import Conduit
 
-import qualified  Data.Vinyl.Derived as V
+import qualified  Data.Vinyl as V
 import qualified  Data.Vinyl.TypeLevel as V
 
 
@@ -30,18 +31,85 @@ the main definition of an state managing strategy
 -}
 
 
+
+data Invariant i ss s where
+  Invariant :: HasSegment ss s => Proxy s -> (SegmentS s -> (Maybe Text)) -> Invariant i ss s
+
+runInvariant :: (HasInvariant i ss s, AcidWorldState i, Functor (AWQuery i ss)) => Invariant i ss s -> AWQuery i ss (Maybe Text)
+runInvariant (Invariant p f) = fmap f $ askSegment p
+
+newtype Invariants i ss = Invariants {invariantsFieldRec :: V.AFieldRec (ToInvariantFields i ss ss)}
+
+class (V.KnownField a, (V.Snd a) ~ Maybe (Invariant i ss (V.Fst a))) => KnownInvariantField i ss a
+instance (V.KnownField a, (V.Snd a) ~ Maybe (Invariant i ss (V.Fst a))) => KnownInvariantField i ss a
+
+type ValidInvariantNames i ss =
+  ( V.AllFields (ToInvariantFields i ss ss)
+  , V.AllConstrained (KnownInvariantField i ss) (ToInvariantFields i ss ss)
+  , V.NatToInt (V.RLength (ToInvariantFields i ss ss))
+  , UniqueElementsWithErr ss ~ 'True
+  )
+
+
+
+
+
+makeEmptyInvariant :: forall i ss a. KnownInvariantField i ss a => Proxy i -> Proxy ss -> V.ElField '(V.Fst a, (V.Snd a))
+makeEmptyInvariant _ _ = (V.Label :: V.Label (V.Fst a)) V.=: Nothing
+
+emptyInvariants :: forall i ss. ValidInvariantNames i ss => Invariants i ss
+emptyInvariants = Invariants $ V.toARec $ V.rpureConstrained (Proxy :: Proxy (KnownInvariantField i ss))  (makeEmptyInvariant (Proxy :: Proxy i) (Proxy :: Proxy ss))
+
+type family ToInvariantFields i (allSS :: [Symbol]) (ss :: [Symbol]) = (iFields :: [(Symbol, *)]) where
+  ToInvariantFields _ _ '[] = '[]
+  ToInvariantFields i allSS (s ': ss) = '(s, Maybe (Invariant i allSS s)) ': ToInvariantFields i allSS ss
+
+
+class (V.HasField V.ARec s (ToInvariantFields i ss ss) (Maybe (Invariant i ss s)), KnownSymbol s) => HasInvariant i ss s
+instance (V.HasField V.ARec s (ToInvariantFields i ss ss) (Maybe (Invariant i ss s)), KnownSymbol s) => HasInvariant i ss s
+
+class (
+        All (HasInvariant i ss) ss)
+      => ValidInvariants i ss
+instance (
+        All (HasInvariant i ss) ss)
+      => ValidInvariants i ss
+
+type HasValidSegment i ss s = (HasSegment ss s, HasInvariant i ss s)
+
+getInvariantP :: forall i s ss. (HasInvariant i ss s) => Proxy s ->  Invariants i ss -> Maybe (Invariant i ss s)
+getInvariantP _ (Invariants fr) = V.getField $ V.rgetf (V.Label :: V.Label s) fr
+
+type ValidSegmentsAndInvar i ss = (ValidSegments ss, ValidInvariants i ss)
+
+
+type ChangedSegmentsInvariantsMap i ss = HM.HashMap Text (AWQuery i ss (Maybe Text))
+
+runChangedSegmentsInvariantsMap :: forall i ss. ValidAcidWorldState i ss => ChangedSegmentsInvariantsMap i ss -> AWQuery i ss (Maybe [(Text, Text)])
+runChangedSegmentsInvariantsMap hm = foldM doRunInvariant Nothing (HM.toList hm)
+  where
+    doRunInvariant ::(Maybe [(Text, Text)]) -> (Text, AWQuery i ss (Maybe Text)) -> AWQuery i ss (Maybe [(Text, Text)])
+    doRunInvariant res (k, act) = do
+      r <- act
+      case r of
+        Nothing -> pure res
+        Just err ->
+          case res of
+            Nothing -> pure . Just $ [(k, err)]
+            Just errs -> pure . Just $ errs ++ [(k, err)]
+
 class AcidWorldState (i :: *) where
   data AWState i (ss :: [Symbol])
   data AWConfig i (ss :: [Symbol])
   data AWUpdate i (ss :: [Symbol]) a
   data AWQuery i (ss :: [Symbol]) a
-  initialiseState :: (MonadIO z, ValidSegments ss) => AWConfig i ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState i ss))
+  initialiseState :: (MonadIO z, ValidSegmentsAndInvar i ss) => AWConfig i ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> z (Either Text (AWState i ss))
   closeState :: (MonadIO z) => AWState i ss -> z ()
   closeState _ = pure ()
   getSegment :: (HasSegment ss s) =>  Proxy s -> AWUpdate i ss (SegmentS s)
-  putSegment :: (HasSegment ss s) =>  Proxy s -> (SegmentS s) -> AWUpdate i ss ()
+  putSegment :: (HasSegment ss s, HasInvariant i ss s, ValidSegmentsAndInvar i ss) =>  Proxy s -> (SegmentS s) -> AWUpdate i ss ()
   askSegment :: (HasSegment ss s) =>  Proxy s -> AWQuery i ss (SegmentS s)
-  runUpdateC :: (ValidSegments ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState i ss -> EventC (firstN ': ns) -> m (NP Event (firstN ': ns), EventResult firstN)
+  runUpdateC :: (ValidSegmentsAndInvar i ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState i ss -> EventC (firstN ': ns) -> m (NP Event (firstN ': ns), EventResult firstN)
   runQuery :: (MonadIO m) => AWState i ss -> AWQuery i ss a -> m a
   liftQuery :: AWQuery i ss a -> AWUpdate i ss a
 
@@ -56,14 +124,16 @@ class AcidWorldState (i :: *) where
 class ( AcidWorldState i
       , Monad (AWUpdate i ss)
       , Monad (AWQuery i ss)
-      , ValidSegments ss)
+      , ValidSegments ss
+      , ValidInvariants i ss)
       => ValidAcidWorldState i ss
-
 instance ( AcidWorldState i
       , Monad (AWUpdate i ss)
       , Monad (AWQuery i ss)
-      , ValidSegments ss)
+      , ValidSegments ss
+      , ValidInvariants i ss)
       => ValidAcidWorldState i ss
+
 
 
 askStateNp :: forall i ss. (ValidAcidWorldState i ss) => AWQuery i ss (NP V.ElField (ToSegmentFields ss))

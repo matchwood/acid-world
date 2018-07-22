@@ -59,7 +59,7 @@ instance Segment "Users" where
   type SegmentS "Users" = UserIxSet
   defaultState _ = IxSet.empty
 
-insertUser :: (ValidAcidWorldState i ss, HasSegment ss  "Users") => User -> AWUpdate i ss User
+insertUser :: (ValidAcidWorldState i ss, HasValidSegment i ss  "Users") => User -> AWUpdate i ss User
 insertUser a = do
   ls <- getSegment (Proxy :: Proxy "Users")
   let newLs = IxSet.insert a ls
@@ -72,7 +72,7 @@ instance Eventable "insertUser" where
   type EventSegments "insertUser" = '["Users"]
   runEvent _ = toRunEvent insertUser
 
-insertUserWithBoolReturn :: (ValidAcidWorldState i ss, HasSegment ss  "Users") => User -> AWUpdate i ss Bool
+insertUserWithBoolReturn :: (ValidAcidWorldState i ss, HasValidSegment i ss  "Users") => User -> AWUpdate i ss Bool
 insertUserWithBoolReturn a = do
   u <- insertUser a
   return $ userDisabled u
@@ -83,10 +83,10 @@ instance Eventable "insertUserWithBoolReturn" where
   type EventSegments "insertUserWithBoolReturn" = '["Users"]
   runEvent _ = toRunEvent insertUserWithBoolReturn
 
-fetchUsers :: (ValidAcidWorldState i ss, HasSegment ss  "Users") => AWQuery i ss [User]
+fetchUsers :: (ValidAcidWorldState i ss, HasValidSegment i ss  "Users") => AWQuery i ss [User]
 fetchUsers = fmap IxSet.toList $ askSegment (Proxy :: Proxy "Users")
 
-fetchUsersStats :: (ValidAcidWorldState i ss, HasSegment ss  "Users") => AWQuery i ss Int
+fetchUsersStats :: (ValidAcidWorldState i ss, HasValidSegment i ss  "Users") => AWQuery i ss Int
 fetchUsersStats = fmap IxSet.size $ askSegment (Proxy :: Proxy "Users")
 
 
