@@ -57,8 +57,11 @@ allSerialisers = [
 
 persistentBackends :: [AppValidBackend]
 persistentBackends = [
-      AppValidBackend $ \t -> AWBConfigFS t True
+     fsBackend
     ]
+
+fsBackend :: AppValidBackend
+fsBackend = AppValidBackend $ \t -> AWBConfigFS t True
 
 persistentBackendsWithGzip :: [AppValidBackend]
 persistentBackendsWithGzip = [

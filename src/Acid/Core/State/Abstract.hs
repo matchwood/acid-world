@@ -127,7 +127,7 @@ class AcidWorldState (i :: *) where
   data AWConfig i (ss :: [Symbol])
   data AWUpdate i (ss :: [Symbol]) a
   data AWQuery i (ss :: [Symbol]) a
-  initialiseState :: (MonadIO z, ValidSegmentsAndInvar ss) => AWConfig i ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> Invariants ss -> z (Either AWException (AWState i ss))
+  initialiseState :: (MonadIO z, ValidSegmentsAndInvar ss) => AWConfig i ss -> (BackendHandles z ss nn) -> Invariants ss -> z (Either AWException (AWState i ss))
   closeState :: (MonadIO z) => AWState i ss -> z ()
   closeState _ = pure ()
   getSegment :: (HasSegment ss s) =>  Proxy s -> AWUpdate i ss (SegmentS s)
@@ -173,7 +173,7 @@ askSegmentsState = fmap npToSegmentsState askStateNp
 
 data BackendHandles m ss nn = BackendHandles {
     bhLoadEvents :: forall i. MonadIO m => m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),
-    bhGetLastCheckpointState :: MonadIO m => m ((Either AWException (Maybe (SegmentsState ss))))
+    bhGetInitialState :: MonadIO m => m ((Either AWException (SegmentsState ss)))
   }
 
 

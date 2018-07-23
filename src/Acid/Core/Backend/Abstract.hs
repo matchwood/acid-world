@@ -35,8 +35,8 @@ class AcidWorldBackend (b :: k) where
   createCheckpointBackend _ _ _ = pure ()
 
   -- should return the most recent checkpoint state, if any
-  getLastCheckpointState :: (MonadUnliftIO m, PrimMonad m, MonadThrow m, AcidSerialiseConduitT t ~ AWBSerialiseConduitT b, ValidSegmentsSerialise t ss ) => Proxy ss -> AWBState b -> AcidSerialiseEventOptions t -> m (Either AWException (Maybe (SegmentsState ss)))
-  getLastCheckpointState _ _ _ = pure . pure $ Nothing
+  getInitialState :: (MonadUnliftIO m, PrimMonad m, MonadThrow m, AcidSerialiseConduitT t ~ AWBSerialiseConduitT b, ValidSegmentsSerialise t ss ) => SegmentsState ss -> AWBState b -> AcidSerialiseEventOptions t -> m (Either AWException (SegmentsState ss))
+  getInitialState defState _ _ = pure . pure $ defState
   -- return events since the last checkpoint, if any
   loadEvents :: (MonadIO m) => (ConduitT (AWBSerialiseConduitT b) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->  AWBState b -> m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
   loadEvents _ _ = pure $ yieldMany []

@@ -6,6 +6,7 @@ import RIO
 
 import Generics.SOP
 
+import Acid.Core.Utils
 import Acid.Core.Segment
 import Acid.Core.State
 import Acid.Core.Serialise
@@ -48,20 +49,14 @@ openAcidWorld :: forall m ss nn b uMonad t.
                , ValidSegmentsSerialise t ss
                ) => SegmentsState ss -> Invariants ss -> AWBConfig b -> AWConfig uMonad ss -> AcidSerialiseEventOptions t ->  m (Either AWException (AcidWorld ss nn t))
 openAcidWorld acidWorldDefaultState acidWorldInvariants acidWorldBackendConfig acidWorldStateConfig acidWorldSerialiserOptions = do
-  (eAcidWorldBackendState) <- initialiseBackend acidWorldBackendConfig
-  case eAcidWorldBackendState of
-    Left err -> pure . Left $ err
-    Right acidWorldBackendState -> do
-      let parsers = makeDeserialiseParsers acidWorldSerialiserOptions (Proxy :: Proxy ss) (Proxy :: Proxy nn)
-      let handles = BackendHandles {
-              bhLoadEvents = (loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState) :: m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),
-              bhGetLastCheckpointState = getLastCheckpointState (Proxy :: Proxy ss) acidWorldBackendState acidWorldSerialiserOptions
-            }
+  eBind (initialiseBackend acidWorldBackendConfig) $ \acidWorldBackendState -> do
+    let parsers = makeDeserialiseParsers acidWorldSerialiserOptions (Proxy :: Proxy ss) (Proxy :: Proxy nn)
+    let handles = BackendHandles {
+            bhLoadEvents = (loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState) :: m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),
+            bhGetInitialState = getInitialState acidWorldDefaultState acidWorldBackendState acidWorldSerialiserOptions
+          }
 
-      (eAcidWorldState) <- initialiseState acidWorldStateConfig handles acidWorldDefaultState acidWorldInvariants
-      pure $ do
-        acidWorldState <- eAcidWorldState
-        pure AcidWorld{..}
+    eBind (initialiseState acidWorldStateConfig handles acidWorldInvariants) $ \acidWorldState -> pure . pure $ AcidWorld{..}
 
 closeAcidWorld :: (MonadIO m) => AcidWorld ss nn t -> m ()
 closeAcidWorld (AcidWorld {..}) = do

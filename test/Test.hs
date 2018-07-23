@@ -5,6 +5,7 @@ import Shared.App
 import RIO
 import qualified RIO.Text as T
 import qualified RIO.List as L
+import qualified RIO.Directory as Dir
 
 import Data.Proxy(Proxy(..))
 import Acid.World
@@ -48,7 +49,10 @@ tests = testGroup "Tests" $
   map serialiserTests allSerialisers ++
   withBackends ephemeralBackendSerialiserTests (backendsWithAllSerialisers allBackends) ++
   withBackends persistentBackendSerialiserTests (backendsWithAllSerialisers persistentBackendsWithGzip) ++
-  withBackends persistentBackendConstraintTests (backendsWithSerialisers persistentBackends [defaultAppSerialiser])
+  withBackends persistentBackendConstraintTests (backendsWithSerialisers persistentBackends [defaultAppSerialiser]) ++
+
+  fsSpecificTests (\t -> AWBConfigFS t True) defaultAppSerialiser
+
 
 
 serialiserTests ::  AppValidSerialiser-> TestTree
@@ -79,7 +83,11 @@ persistentBackendConstraintTests (AppValidBackend (bConf :: FilePath -> (AWBConf
   , testCaseSteps "validAppConstraintsOnRestore" $ unit_validAppConstraintsOnRestore bConf o
 
   ]
+fsSpecificTests :: (FilePath -> (AWBConfig AcidWorldBackendFS)) -> AppValidSerialiser -> [TestTree]
+fsSpecificTests bConf (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = [
+    testCaseSteps "defaultSegmentUsedOnRestore" $ unit_defaultSegmentUsedOnRestore bConf o
 
+  ]
 genStorableEvent :: QC.Gen (StorableEvent AppSegments AppEvents "insertUser")
 genStorableEvent = do
   t <- QC.arbitrary
@@ -240,3 +248,42 @@ unit_validAppConstraintsOnRestore b o step = do
         else Nothing
     userInvariantFailureMessage :: Text
     userInvariantFailureMessage = "Only 800 users are allowed in this segment"
+
+
+unit_defaultSegmentUsedOnRestore :: forall s. (AppValidBackendConstraint AcidWorldBackendFS, AppValidSerialiserConstraint s)  => (FilePath -> AWBConfig AcidWorldBackendFS) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
+unit_defaultSegmentUsedOnRestore b o step = do
+
+  td <- mkTempDir
+  let conf = b td
+
+  us <- QC.generate $ generateUsers 1000
+  allPs <- QC.generate $ generatePhonenumbers 1000
+  let (ps, ps2) = (take 500 allPs, drop 500 allPs)
+
+  step "Opening acid world"
+  aw <- throwEither $ openAcidWorld (unitDefaultState ps) emptyInvariants conf AWConfigPureState o
+
+  step "Inserting records"
+  mapM_ (runInsertUser aw) us
+  mapM_ (runInsertPhonenumber aw) ps2
+  ps3 <- query aw fetchPhonenumbers
+  assertBool "Fetched phonenumber list did not match default ++ inserted phonenumbers" (L.sort allPs == L.sort ps3)
+
+  step "Creating checkpoint"
+  createCheckpoint aw
+  step "Closing acid world"
+  closeAcidWorld aw
+  --delete pn checkpoint
+  Dir.removeFile $ makeSegmentPath conf (Proxy :: Proxy "Phonenumbers")
+  Dir.removeFile $ makeSegmentCheckPath conf (Proxy :: Proxy "Phonenumbers")
+  step "Reopening acid world with new invariant"
+  aw2 <- throwEither $ reopenAcidWorld aw
+  ps4 <- query aw2 fetchPhonenumbers
+  us2 <- query aw2 fetchUsers
+  assertBool "Fetched phonenumber list did not match default phonenumber state" (L.sort ps == L.sort ps4)
+  assertBool "Fetched user list did not match inserted users" (L.sort us == L.sort us2)
+
+  where
+    unitDefaultState :: [Phonenumber] -> SegmentsState AppSegments
+    unitDefaultState ps =
+      putSegmentP (Proxy :: Proxy "Phonenumbers") (IxSet.fromList ps) defaultSegmentsState

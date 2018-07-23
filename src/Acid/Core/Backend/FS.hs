@@ -86,14 +86,14 @@ instance AcidWorldBackend AcidWorldBackendFS where
     writeCheckpoint s t sToWrite
 
 
-  getLastCheckpointState ps s t = do
+  getInitialState defState s t = do
     let cpFolder = currentCheckpointFolder (aWBStateFSConfig $ s)
     doesExist <- Dir.doesDirectoryExist cpFolder
     if doesExist
       then do
         let middleware = if (aWBConfigGzip  . aWBStateFSConfig $ s) then ungzip else awaitForever $ yield
-        fmap (left AWExceptionSegmentDeserialisationError) $ readLastCheckpointState middleware ps s t
-      else pure . pure $ Nothing
+        fmap (left AWExceptionSegmentDeserialisationError) $ readLastCheckpointState middleware defState s t
+      else pure . pure $ defState
 
   closeBackend s = modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
     liftIO $ hClose hdl
@@ -143,17 +143,17 @@ writeSegment middleware s t ((V.Field seg)) = do
 
 
 
-readLastCheckpointState :: forall ss m t. (ValidSegmentsSerialise t ss,  MonadUnliftIO m, AcidSerialiseConduitT t ~ BS.ByteString) =>  ConduitT ByteString ByteString (ResourceT m) () -> Proxy ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either Text (Maybe (SegmentsState ss)))
-readLastCheckpointState middleware _ s t = (fmap . fmap) (Just . npToSegmentsState) segsNpE
+readLastCheckpointState :: forall ss m t. (ValidSegmentsSerialise t ss,  MonadUnliftIO m, AcidSerialiseConduitT t ~ BS.ByteString) =>  ConduitT ByteString ByteString (ResourceT m) () -> SegmentsState ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either Text (SegmentsState ss))
+readLastCheckpointState middleware defState s t = (fmap . fmap) (npToSegmentsState) segsNpE
 
   where
     segsNpE :: m (Either Text (NP V.ElField (ToSegmentFields ss)))
     segsNpE = runConcurrently $ unComp $ sequence'_NP segsNp
     segsNp :: NP ((Concurrently m  :.: Either Text) :.: V.ElField) (ToSegmentFields ss)
     segsNp = cmap_NP (Proxy :: Proxy (SegmentFieldSerialise ss t)) readSegmentFromProxy proxyNp
-    readSegmentFromProxy :: forall a b. (AcidSerialiseSegmentFieldConstraint t '(a, b), b ~ SegmentS a) => Proxy '(a, b) -> ((Concurrently m :.: Either Text) :.: V.ElField) '(a, b)
+    readSegmentFromProxy :: forall a b. (AcidSerialiseSegmentFieldConstraint t '(a, b), b ~ SegmentS a, HasSegment ss a) => Proxy '(a, b) -> ((Concurrently m :.: Either Text) :.: V.ElField) '(a, b)
     readSegmentFromProxy _ =  Comp $  fmap V.Field $  Comp $ readSegment (Proxy :: Proxy a)
-    readSegment :: forall sName. (AcidSerialiseSegmentNameConstraint t sName) => Proxy sName -> Concurrently m (Either Text (SegmentS sName))
+    readSegment :: forall sName. (AcidSerialiseSegmentNameConstraint t sName, HasSegment ss sName) => Proxy sName -> Concurrently m (Either Text (SegmentS sName))
     readSegment ps = Concurrently $ do
       let segPath = makeSegmentPath (aWBStateFSConfig $ s) ps
           segCheckPath = makeSegmentCheckPath (aWBStateFSConfig $ s) ps
@@ -164,9 +164,9 @@ readLastCheckpointState middleware _ s t = (fmap . fmap) (Just . npToSegmentsSta
         pure (a, b)
 
       case (segPathExists, segCheckPathExists) of
-        (False, False) -> pure . Right $ defaultState ps
-        (False, True) -> pure . Left $ prettySegment ps <> "Segment check file could not be found at " <> showT segCheckPath <> ". If you are confident that your segment file contains the correct data then you can fix this error by manually creating a segment check file at that path with the output of `sha256sum "<> showT segPath <> "`"
-        (True, False) -> pure . Left $  prettySegment ps <> "Segment file missing at " <> showT segPath <> ". This is almost certainly due to some kind of data corruption. To clear this error you can delete the check file at " <> showT segCheckPath <> " but that will revert the system to using the default state defined for this segment"
+        (False, False) -> pure . Right $ getSegmentP ps defState
+        (True, False) -> pure . Left $ prettySegment ps <> "Segment check file could not be found at " <> showT segCheckPath <> ". If you are confident that your segment file contains the correct data then you can fix this error by manually creating a segment check file at that path with the output of `sha256sum "<> showT segPath <> "`"
+        (False, True) -> pure . Left $  prettySegment ps <> "Segment file missing at " <> showT segPath <> ". This is almost certainly due to some kind of data corruption. To clear this error you can delete the check file at " <> showT segCheckPath <> " but that will revert the system to using the default state defined for this segment"
         (True, True) -> do
           hash <- fileSha256 segPath
           eBind (readSha256FromFile segCheckPath) $ \checkHash -> do

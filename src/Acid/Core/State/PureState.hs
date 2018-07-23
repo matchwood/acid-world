@@ -10,6 +10,7 @@ import qualified  RIO.HashMap as HM
 import qualified Control.Concurrent.STM.TVar as  TVar
 import qualified Control.Concurrent.STM  as STM
 
+import Acid.Core.Utils
 import Acid.Core.Segment
 import Acid.Core.State.Abstract
 import Conduit
@@ -40,26 +41,23 @@ instance AcidWorldState AcidStatePureState where
 
     lift . lift $ St.modify' (putSegmentP ps seg)
   askSegment ps = AWQueryPureState $ getSegmentP ps `fmap` Re.ask
-  initialiseState :: forall z ss nn. (MonadIO z,  ValidSegmentsAndInvar ss) => AWConfig AcidStatePureState ss -> (BackendHandles z ss nn) -> (SegmentsState ss) -> (Invariants ss) -> z (Either AWException (AWState AcidStatePureState ss))
-  initialiseState _ (BackendHandles{..}) defState invars = do
-    mCpState <- bhGetLastCheckpointState
+  initialiseState :: forall z ss nn. (MonadIO z,  ValidSegmentsAndInvar ss) => AWConfig AcidStatePureState ss -> (BackendHandles z ss nn) -> (Invariants ss) -> z (Either AWException (AWState AcidStatePureState ss))
+  initialiseState _ (BackendHandles{..}) invars = do
 
-    case mCpState of
-      (Left err) -> pure . Left  $ err
-      Right cpState -> do
-        let startState = fromMaybe defState cpState
-        weStream <- bhLoadEvents
-        eS <- liftIO $ runConduitRes $ weStream .| breakOnLeft applyToState startState
-        case eS of
-          Left err -> pure . Left . AWExceptionEventDeserialisationError $ err
-          Right s -> do
 
-            -- run invariants
-            case runAWQueryPureState (runChangedSegmentsInvariantsMap (allInvariants invars)) s of
-              Nothing -> do
-                tvar <- liftIO $ STM.atomically $ TVar.newTVar s
-                pure . pure $ AWStatePureState tvar invars
-              Just err -> pure . Left $ err
+    eBind bhGetInitialState $ \initState -> do
+      weStream <- bhLoadEvents
+      eS <- liftIO $ runConduitRes $ weStream .| breakOnLeft applyToState initState
+      case eS of
+        Left err -> pure . Left . AWExceptionEventDeserialisationError $ err
+        Right s -> do
+
+          -- run invariants
+          case runAWQueryPureState (runChangedSegmentsInvariantsMap (allInvariants invars)) s of
+            Nothing -> do
+              tvar <- liftIO $ STM.atomically $ TVar.newTVar s
+              pure . pure $ AWStatePureState tvar invars
+            Just err -> pure . Left $ err
     where
       breakOnLeft :: (Monad m) => (s -> a -> s) -> s -> ConduitT (Either Text a) o m (Either Text s)
       breakOnLeft f = loop
