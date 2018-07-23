@@ -124,21 +124,25 @@ writeCheckpoint s t np = do
   let acts =  cfoldMap_NP (Proxy :: Proxy (AcidSerialiseSegmentFieldConstraint t)) ((:[]) . writeSegment middleware s t) np
   mapConcurrently_ id acts
 
-writeSegment :: forall t m fs. (AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, AcidSerialiseSegmentFieldConstraint t fs) => ConduitT ByteString ByteString (ResourceT m) () -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> V.ElField fs -> m ()
+writeSegment :: forall t m fs. (AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, MonadThrow m, AcidSerialiseSegmentFieldConstraint t fs) => ConduitT ByteString ByteString (ResourceT m) () -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> V.ElField fs -> m ()
 writeSegment middleware s t ((V.Field seg)) = do
-  let segPath = makeSegmentPath (aWBStateFSConfig $ s) (Proxy :: Proxy (V.Fst fs))
-  runConduitRes $
-    serialiseSegment t seg .|
-    middleware .|
-    sinkFileCautious segPath
-  writeSegmentCheckFile
-  where
-    writeSegmentCheckFile :: m ()
-    writeSegmentCheckFile = do
-      let segPath = makeSegmentPath (aWBStateFSConfig $ s) (Proxy :: Proxy (V.Fst fs))
-          segCheckPath = makeSegmentCheckPath (aWBStateFSConfig $ s) (Proxy :: Proxy (V.Fst fs))
-      hash <- fileSha256 segPath
-      BS.writeFile segCheckPath (BA.convertToBase BA.Base16 hash)
+
+  let pp = (Proxy :: Proxy (V.Fst fs))
+      segPath = makeSegmentPath (aWBStateFSConfig $ s) pp
+      segCheckPath = makeSegmentCheckPath (aWBStateFSConfig $ s) (Proxy :: Proxy (V.Fst fs))
+
+  -- we simultaneously write out the segment file and the calculated segment hash file, and check them afterwards to verify consistency of the write
+  _ <-
+    runConduitRes $
+      serialiseSegment t seg .|
+      middleware .|
+      sequenceSinks [(sinkFileCautious segPath), (sha256Transformer .| sinkFileCautious segCheckPath)]
+
+  res <- getSegmentHashes segPath segCheckPath
+  case res of
+    Left err -> throwM $ AWExceptionEventSerialisationError $ prettySegment pp <> "Error when checking segment write: " <> err
+    Right (hash, checkHash) -> when (hash /= checkHash) $
+        throwM $ AWExceptionEventSerialisationError  $ prettySegment pp <> "Segment check hash did not match written segment file - corruption occurred while writing"
 
 
 
@@ -168,8 +172,7 @@ readLastCheckpointState middleware defState s t = (fmap . fmap) (npToSegmentsSta
         (True, False) -> pure . Left $ prettySegment ps <> "Segment check file could not be found at " <> showT segCheckPath <> ". If you are confident that your segment file contains the correct data then you can fix this error by manually creating a segment check file at that path with the output of `sha256sum "<> showT segPath <> "`"
         (False, True) -> pure . Left $  prettySegment ps <> "Segment file missing at " <> showT segPath <> ". This is almost certainly due to some kind of data corruption. To clear this error you can delete the check file at " <> showT segCheckPath <> " but that will revert the system to using the default state defined for this segment"
         (True, True) -> do
-          hash <- fileSha256 segPath
-          eBind (readSha256FromFile segCheckPath) $ \checkHash -> do
+          eBind (getSegmentHashes segPath segCheckPath) $ \(hash, checkHash) -> do
             if hash /= checkHash
               then pure . Left $ "Invalid checkpoint - check file ("  <> showT segCheckPath <> ": " <> showT checkHash <> ") did not match hash of segment file" <> "(" <> showT segPath <> ": " <>  showT hash <> ")" <> " when reading segment *" <> toUniqueText ps <> "*"
               else runResourceT $ runSTT $ runConduit $
@@ -180,10 +183,29 @@ readLastCheckpointState middleware defState s t = (fmap . fmap) (npToSegmentsSta
     proxyNp :: NP Proxy (ToSegmentFields ss)
     proxyNp = pure_NP Proxy
 
-fileSha256 :: (MonadUnliftIO m) => FilePath -> m (Hash.Digest Hash.SHA256)
-fileSha256 fp = fmap Hash.hashFinalize $ runConduitRes $
-  sourceFile fp .|
-  foldlC Hash.hashUpdate Hash.hashInit
+
+getSegmentHashes :: (MonadUnliftIO m) =>  FilePath -> FilePath -> m (Either Text (Hash.Digest Hash.SHA256, Hash.Digest Hash.SHA256))
+getSegmentHashes sp scp = do
+  eBind (readSha256FromFile scp) $ \hb -> do
+    ha <- sha256ForFile sp
+    pure . pure $ (ha, hb)
+
+
+
+sha256Transformer :: forall m. (Monad m) => ConduitT BS.ByteString BS.ByteString m ()
+sha256Transformer = await >>= loop (Hash.hashInit)
+  where
+    loop :: Hash.Context Hash.SHA256 -> Maybe (BS.ByteString) -> ConduitT BS.ByteString BS.ByteString m ()
+    loop ctx (Just bs) = await >>= loop (Hash.hashUpdate ctx bs)
+    loop ctx (Nothing) = yield (BA.convertToBase BA.Base16 (Hash.hashFinalize ctx))
+
+
+sha256Sink ::(Monad m) => ConduitT BS.ByteString o m (Hash.Digest Hash.SHA256)
+sha256Sink =  fmap Hash.hashFinalize $ foldlC Hash.hashUpdate Hash.hashInit
+
+sha256ForFile :: (MonadUnliftIO m) => FilePath -> m (Hash.Digest Hash.SHA256)
+sha256ForFile fp = runConduitRes $
+  sourceFile fp .| sha256Sink
 
 readSha256FromFile :: (MonadUnliftIO m) => FilePath -> m (Either Text (Hash.Digest Hash.SHA256))
 readSha256FromFile fp = do

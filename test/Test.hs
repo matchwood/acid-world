@@ -288,11 +288,11 @@ unit_defaultSegmentUsedOnRestore b o step = do
   step "Replacing segment, removing segment check and reopening"
 
   Dir.renameFile segPathTemp segPath
-  Dir.removeFile $ segCheckPatch
+  Dir.renameFile segCheckPatch (segCheckPatch <> ".deleted")
   res2 <- reopenAcidWorld aw
   assertErrorPrefix (AWExceptionSegmentDeserialisationError $ (prettySegment pp) <> "Segment check file could not be found at") res2
 
-  Dir.removeFile $ segPath
+  Dir.renameFile segPath (segPath <> ".deleted")
 
   step "Removing segment and check and reopening"
 
@@ -312,6 +312,7 @@ unit_defaultSegmentUsedOnRestore b o step = do
 assertErrorPrefix :: AWException -> Either AWException a -> Assertion
 assertErrorPrefix e (Right _) = assertFailure $ "Expected an exception like " <> show e <> " but got a success"
 assertErrorPrefix (AWExceptionInvariantsViolated ts) (Left (AWExceptionInvariantsViolated ts2)) = assertEqualPrefix (showT ts) (showT ts2)
+assertErrorPrefix (AWExceptionEventSerialisationError ts) (Left (AWExceptionEventSerialisationError ts2)) = assertEqualPrefix ts ts2
 assertErrorPrefix (AWExceptionEventDeserialisationError ts) (Left (AWExceptionEventDeserialisationError ts2)) = assertEqualPrefix ts ts2
 assertErrorPrefix (AWExceptionSegmentDeserialisationError ts) (Left (AWExceptionSegmentDeserialisationError ts2)) = assertEqualPrefix ts ts2
 assertErrorPrefix e (Left e2) = assertEqual "Expected matching exception constructors" e e2

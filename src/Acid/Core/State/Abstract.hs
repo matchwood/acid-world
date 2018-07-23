@@ -32,6 +32,7 @@ the main definition of an state managing strategy
 
 data AWException =
     AWExceptionInvariantsViolated [(Text, Text)]
+  | AWExceptionEventSerialisationError Text
   | AWExceptionEventDeserialisationError Text
   | AWExceptionSegmentDeserialisationError Text
   deriving (Eq, Show, Typeable)
