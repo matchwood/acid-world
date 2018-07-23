@@ -274,9 +274,29 @@ unit_defaultSegmentUsedOnRestore b o step = do
   step "Closing acid world"
   closeAcidWorld aw
   --delete pn checkpoint
-  Dir.removeFile $ makeSegmentPath conf (Proxy :: Proxy "Phonenumbers")
-  Dir.removeFile $ makeSegmentCheckPath conf (Proxy :: Proxy "Phonenumbers")
-  step "Reopening acid world with new invariant"
+  let pp  = (Proxy :: Proxy "Phonenumbers")
+      segPath = makeSegmentPath conf pp
+      segCheckPatch =  makeSegmentCheckPath conf pp
+      segPathTemp = segPath <> ".temp"
+
+  step "Moving segment and reopening"
+
+  Dir.renameFile segPath segPathTemp
+  res <- reopenAcidWorld aw
+  assertErrorPrefix (AWExceptionSegmentDeserialisationError $ (prettySegment pp) <> "Segment file missing at") res
+
+  step "Replacing segment, removing segment check and reopening"
+
+  Dir.renameFile segPathTemp segPath
+  Dir.removeFile $ segCheckPatch
+  res2 <- reopenAcidWorld aw
+  assertErrorPrefix (AWExceptionSegmentDeserialisationError $ (prettySegment pp) <> "Segment check file could not be found at") res2
+
+  Dir.removeFile $ segPath
+
+  step "Removing segment and check and reopening"
+
+
   aw2 <- throwEither $ reopenAcidWorld aw
   ps4 <- query aw2 fetchPhonenumbers
   us2 <- query aw2 fetchUsers
@@ -287,3 +307,14 @@ unit_defaultSegmentUsedOnRestore b o step = do
     unitDefaultState :: [Phonenumber] -> SegmentsState AppSegments
     unitDefaultState ps =
       putSegmentP (Proxy :: Proxy "Phonenumbers") (IxSet.fromList ps) defaultSegmentsState
+
+
+assertErrorPrefix :: AWException -> Either AWException a -> Assertion
+assertErrorPrefix e (Right _) = assertFailure $ "Expected an exception like " <> show e <> " but got a success"
+assertErrorPrefix (AWExceptionInvariantsViolated ts) (Left (AWExceptionInvariantsViolated ts2)) = assertEqualPrefix (showT ts) (showT ts2)
+assertErrorPrefix (AWExceptionEventDeserialisationError ts) (Left (AWExceptionEventDeserialisationError ts2)) = assertEqualPrefix ts ts2
+assertErrorPrefix (AWExceptionSegmentDeserialisationError ts) (Left (AWExceptionSegmentDeserialisationError ts2)) = assertEqualPrefix ts ts2
+assertErrorPrefix e (Left e2) = assertEqual "Expected matching exception constructors" e e2
+
+assertEqualPrefix :: Text -> Text -> Assertion
+assertEqualPrefix t t' = assertEqual "Expected matching error message prefixes " t (T.take (T.length t) t')

@@ -55,8 +55,12 @@ openAcidWorld acidWorldDefaultState acidWorldInvariants acidWorldBackendConfig a
             bhLoadEvents = (loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState) :: m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),
             bhGetInitialState = getInitialState acidWorldDefaultState acidWorldBackendState acidWorldSerialiserOptions
           }
-
-    eBind (initialiseState acidWorldStateConfig handles acidWorldInvariants) $ \acidWorldState -> pure . pure $ AcidWorld{..}
+    eAcidWorldState <- initialiseState acidWorldStateConfig handles acidWorldInvariants
+    case eAcidWorldState of
+      Left err -> do
+        closeBackend acidWorldBackendState
+        pure . Left $ err
+      Right acidWorldState ->  pure . pure $ AcidWorld{..}
 
 closeAcidWorld :: (MonadIO m) => AcidWorld ss nn t -> m ()
 closeAcidWorld (AcidWorld {..}) = do

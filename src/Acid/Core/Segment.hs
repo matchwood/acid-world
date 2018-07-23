@@ -30,7 +30,7 @@ type family ToSegmentTypes (segmentNames :: [Symbol]) :: [*] where
   ToSegmentTypes (s ': ss) = (SegmentS s) ': ToSegmentTypes ss
 
 prettySegment :: (Segment s) => Proxy s -> Text
-prettySegment ps = "*Segment \"" <> toUniqueText ps <> "\"* "
+prettySegment ps = "*Segment '" <> toUniqueText ps <> "'* "
 
 newtype SegmentsState segmentNames = SegmentsState {segmentsStateFieldRec :: V.AFieldRec (ToSegmentFields segmentNames)}
 
