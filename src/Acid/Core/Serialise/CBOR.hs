@@ -41,7 +41,7 @@ type CBOREventParser ss nn = (BS.ByteString -> Either Text (Maybe (BS.ByteString
 instance AcidSerialiseEvent AcidSerialiserCBOR where
   data AcidSerialiseEventOptions AcidSerialiserCBOR = AcidSerialiserCBOROptions
   type AcidSerialiseParser AcidSerialiserCBOR ss nn = CBOREventParser ss nn
-  type AcidSerialiseT AcidSerialiserCBOR = Builder
+  type AcidSerialiseT AcidSerialiserCBOR = BL.ByteString
   type AcidSerialiseConduitT AcidSerialiserCBOR = BS.ByteString
   serialiserFileExtension _ = ".cbor"
   serialiseStorableEvent o se = addCRC $ toLazyByteString $ serialiseCBOREvent o se

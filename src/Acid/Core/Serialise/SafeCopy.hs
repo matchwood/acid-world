@@ -7,6 +7,7 @@ import RIO
 import qualified  RIO.HashMap as HM
 import qualified  RIO.Text as T
 import qualified  RIO.ByteString as BS
+import qualified  RIO.ByteString.Lazy as BL
 
 import Control.Arrow (left)
 import Generics.SOP
@@ -32,7 +33,7 @@ data AcidSerialiserSafeCopy
 instance AcidSerialiseEvent AcidSerialiserSafeCopy where
   data AcidSerialiseEventOptions AcidSerialiserSafeCopy = AcidSerialiserSafeCopyOptions
   type AcidSerialiseParser AcidSerialiserSafeCopy ss nn = PartialParserBS (WrappedEvent ss nn)
-  type AcidSerialiseT AcidSerialiserSafeCopy = Builder
+  type AcidSerialiseT AcidSerialiserSafeCopy = BL.ByteString
   type AcidSerialiseConduitT AcidSerialiserSafeCopy = BS.ByteString
   serialiserFileExtension _ = ".safecopy"
   serialiseStorableEvent o se = addCRC $ runPutLazy $ serialiseSafeCopyEvent o se

@@ -9,8 +9,9 @@ import qualified  RIO.HashMap as HM
 import qualified  RIO.Text as T
 import qualified  RIO.ByteString as BS
 import qualified  RIO.ByteString.Lazy as BL
-import qualified  Data.ByteString.Lazy.Internal as BL
-
+import qualified  Data.ByteString.Lazy.Char8 as Char8L
+import qualified  Data.ByteString.Char8 as Char8
+import Text.Printf (printf)
 import Generics.SOP
 import GHC.TypeLits
 import GHC.Exts (Constraint)
@@ -20,6 +21,7 @@ import Data.Proxy(Proxy(..))
 import Acid.Core.Segment
 import Acid.Core.Utils
 import Acid.Core.State
+
 import Data.Typeable
 import qualified  Data.Vinyl.TypeLevel as V
 import Control.Arrow (left)
@@ -27,11 +29,12 @@ import Conduit
 import Control.Monad.ST.Trans
 import qualified  Data.Digest.CRC as CRC
 import qualified  Data.Digest.CRC32 as CRC
-import Data.ByteString.Builder
 import Data.Serialize
 import Data.Bits
 import qualified RIO.Vector.Unboxed.Partial as VUnboxedPartial
 
+
+import Text.Read (readEither)
 {-
 
   This is a fiddly setup. The issue is that we want to abstract serialisation in a context where we are parsing to constrained types. The general approach is to construct a text indexed map of parsers specialised to a specific type and serialise the text key along with the event data
@@ -44,8 +47,8 @@ class (Semigroup (AcidSerialiseT t), Monoid (AcidSerialiseT t)) => AcidSerialise
   serialiserFileExtension :: AcidSerialiseEventOptions t -> FilePath
   serialiserFileExtension _ = ".log"
   tConversions :: AcidSerialiseEventOptions t -> (AcidSerialiseT t -> AcidSerialiseConduitT t, AcidSerialiseConduitT t -> AcidSerialiseT t)
-  default tConversions :: (AcidSerialiseT t ~ Builder, AcidSerialiseConduitT t ~ BS.ByteString) => AcidSerialiseEventOptions t -> (AcidSerialiseT t -> AcidSerialiseConduitT t, AcidSerialiseConduitT t -> AcidSerialiseT t)
-  tConversions _ = (BL.toStrict . toLazyByteString, lazyByteString . BL.fromStrict)
+  default tConversions :: (AcidSerialiseT t ~ BL.ByteString, AcidSerialiseConduitT t ~ BS.ByteString) => AcidSerialiseEventOptions t -> (AcidSerialiseT t -> AcidSerialiseConduitT t, AcidSerialiseConduitT t -> AcidSerialiseT t)
+  tConversions _ = (BL.toStrict, BL.fromStrict)
   serialiserName :: Proxy t -> Text
   default serialiserName :: (Typeable t) => Proxy t -> Text
 
@@ -75,21 +78,22 @@ class AcidSerialiseSegment (t :: k) seg where
 
 
 
+-- we are manually serialising to a fixed width utf8 string here so that for serialisers like json the resulting file is still readable as utf8
 
-addCRC :: BL.ByteString -> Builder
+addCRC :: BL.ByteString -> BL.ByteString
 addCRC content =
-  word64LE contentLength <>
-  word32LE contentHash <>
-  lazyByteString content
+  Char8L.pack (printf "%019d" contentLength) <>
+  Char8L.pack (printf "%010d" contentHash) <>
+  content
   where
     contentLength :: Word64
     contentLength = fromIntegral $ BL.length content
     contentHash :: Word32
     contentHash = CRC.crc32 $ lazyCRCDigest content
 
-checkAndConsumeCRC :: Builder -> Either Text BL.ByteString
+checkAndConsumeCRC :: BL.ByteString -> Either Text BL.ByteString
 checkAndConsumeCRC b = do
-  r <- left T.pack $ runGetLazy readWithCheckSum (toLazyByteString b)
+  r <- left T.pack $ runGetLazy getWithCheckSumLazy b
   checkCRCLazy r
 
 checkCRCLazy :: (CRC.CRC32, BL.ByteString) -> Either Text BL.ByteString
@@ -105,20 +109,39 @@ checkCRCStrict (check, content) =
     then pure content
     else Left $ "Lazy bytestring failed checksum when reading"
 
--- we are using serialise here just because we are adapting this code from acid-state
-readWithCheckSum :: Get (CRC.CRC32, BL.ByteString)
-readWithCheckSum = do
-  contentLength <- getWord64le
-  contentChecksum <-getWord32le
+
+getWithCheckSumLazy :: Get (CRC.CRC32, BL.ByteString)
+getWithCheckSumLazy = do
+  contentLength <- getWord64CharPadded
+  contentChecksum <- getWord32CharPadded
   content <- getLazyByteString_fast (fromIntegral contentLength)
   pure (CRC.CRC32 contentChecksum, content)
 
-readWithCheckSumStrict :: Get (CRC.CRC32, BS.ByteString)
-readWithCheckSumStrict = do
-  contentLength <- getWord64le
-  contentChecksum <-getWord32le
+
+getWithCheckSumStrict :: Get (CRC.CRC32, BS.ByteString)
+getWithCheckSumStrict = do
+  contentLength <- getWord64CharPadded
+  contentChecksum <- getWord32CharPadded
   content <- getBytes (fromIntegral contentLength)
   pure (CRC.CRC32 contentChecksum, content)
+
+getWord64CharPadded :: Get Word64
+getWord64CharPadded = do
+  b <- getBytes 19
+  let s = Char8.unpack b
+  case readEither s of
+    Left err -> fail $ "Could not read Word64 from " <> s <> " : " <> err
+    Right a -> pure a
+
+getWord32CharPadded :: Get Word32
+getWord32CharPadded = do
+  b <- getBytes 10
+  let s = Char8.unpack b
+  case readEither s of
+    Left err -> fail $ "Could not read Word64 from " <> s <> " : " <> err
+    Right a -> pure a
+
+
 
 -- this is directly copied from acid-state
 -- | Read a lazy bytestring WITHOUT any copying or concatenation.
@@ -153,7 +176,7 @@ connectEitherConduit origCond eCond = origCond .| passCond
 
 checkSumConduit :: (Monad m) => ConduitT BS.ByteString (Either Text BS.ByteString) m ()
 checkSumConduit = deserialiseWithPartialParserTransformer $ fmapPartialParser checkCRCStrict $
-  (PartialParser $ \t -> (handleDataDotSerializeParserResult $ runGetPartial readWithCheckSumStrict t))
+  (PartialParser $ \t -> (handleDataDotSerializeParserResult $ runGetPartial getWithCheckSumStrict t))
 
 lazyCRCDigest :: BL.ByteString -> CRC.CRC32
 lazyCRCDigest = updateDigest32Lazy CRC.initCRC

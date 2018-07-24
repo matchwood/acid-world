@@ -20,6 +20,7 @@ library
     Acid.Core.Serialise
     Acid.Core.Serialise.Abstract
     Acid.Core.Serialise.JSON
+    Acid.Core.Serialise.JSON.Partial
     Acid.Core.Serialise.CBOR
     Acid.Core.Serialise.SafeCopy
     Acid.Core.Backend

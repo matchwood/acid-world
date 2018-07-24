@@ -5,7 +5,6 @@ module Acid.Core.Serialise.JSON where
 
 import RIO
 import qualified  RIO.HashMap as HM
-import qualified  RIO.Text as T
 import qualified  RIO.ByteString.Lazy as BL
 import qualified  RIO.ByteString as BS
 import qualified  RIO.Vector as V
@@ -18,13 +17,11 @@ import Generics.SOP.NP
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
 import Data.Aeson(FromJSON(..), ToJSON(..), Value(..))
-import Data.Aeson.Internal (ifromJSON, IResult(..), formatError)
 import Acid.Core.Utils
 import Acid.Core.State
 import Acid.Core.Serialise.Abstract
+import Acid.Core.Serialise.JSON.Partial
 import Conduit
-import qualified Data.Attoparsec.ByteString as Atto
-import qualified Data.Attoparsec.ByteString.Lazy as Atto.L
 
 {-
 implementation of a json serialiser
@@ -32,59 +29,12 @@ implementation of a json serialiser
 data AcidSerialiserJSON
 
 
-{- Partial decoding for json -}
-eitherPartialDecode' :: (FromJSON a) => BS.ByteString -> JSONResult a
-eitherPartialDecode' = eitherPartialDecodeWith Aeson.json' ifromJSON
-
-eitherPartialDecodeWith :: forall a. Atto.Parser Value -> (Value -> IResult a) -> BS.ByteString
-                 -> JSONResult a
-eitherPartialDecodeWith p tra s = handleRes (Atto.parse p s)
-  where
-    handleRes :: Atto.IResult BS.ByteString Value -> JSONResult a
-    handleRes (Atto.Done i v) =
-        case tra v of
-          ISuccess a      -> JSONResultDone (i, a)
-          IError path msg -> JSONResultFail (T.pack $ formatError path msg)
-    handleRes (Atto.Partial np) = JSONResultPartial (handleRes . np)
-    handleRes (Atto.Fail _ _ msg) = JSONResultFail (T.pack msg)
-
-data JSONResult a =
-    JSONResultFail Text
-  | JSONResultPartial (BS.ByteString -> JSONResult a)
-  | JSONResultDone (BS.ByteString, a)
-
-
-handleJSONParserResult :: JSONResult a -> Either Text (Either (PartialParserBS a) (BS.ByteString, a))
-handleJSONParserResult (JSONResultFail err) = Left $ err
-handleJSONParserResult (JSONResultPartial p) = Right . Left $ (PartialParser $ \bs -> handleJSONParserResult $ p bs)
-handleJSONParserResult (JSONResultDone (bs, a)) = Right . Right $ (bs, a)
-
-
-{- Decoding with remainder - needed because of how we serialise event names -}
-eitherDecodeLeftover :: (FromJSON a) => BL.ByteString -> Either Text (BL.ByteString, a)
-eitherDecodeLeftover = eitherDecodeLeftoverWith Aeson.json' ifromJSON
-
-eitherDecodeLeftoverWith :: Atto.L.Parser Value -> (Value -> IResult a) -> BL.ByteString
-                 -> Either Text (BL.ByteString, a)
-eitherDecodeLeftoverWith p tra s =
-    case Atto.L.parse p s of
-      Atto.L.Done bs v     -> case tra v of
-                          ISuccess a      -> pure (bs, a)
-                          IError path msg -> Left (T.pack $ formatError path msg)
-      Atto.L.Fail _ _ msg -> Left (T.pack msg)
-
-consumeMatchAndParse :: forall a b. (FromJSON a, FromJSON b, Eq a, Show a) => Proxy a -> a -> BL.ByteString -> Either Text b
-consumeMatchAndParse _ aMatch bs = do
-  (bs', (a :: a)) <- eitherDecodeLeftover bs
-  if a == aMatch
-    then fmap snd $ eitherDecodeLeftover bs'
-    else Left $ "Expected " <> showT aMatch <> " when consuming prefix, but got " <> showT a
 
 
 instance AcidSerialiseEvent AcidSerialiserJSON where
   data AcidSerialiseEventOptions AcidSerialiserJSON = AcidSerialiserJSONOptions
   type AcidSerialiseParser AcidSerialiserJSON ss nn = PartialParserBS (WrappedEvent ss nn)
-  type AcidSerialiseT AcidSerialiserJSON = Builder
+  type AcidSerialiseT AcidSerialiserJSON = BL.ByteString
   type AcidSerialiseConduitT AcidSerialiserJSON = BS.ByteString
   serialiserFileExtension _ = ".json"
   -- due to the constraints of json (single top level object) we have a choice between some kind of separation between events (newline) or to simply write out the event name followed by the event. we choose the latter because it should be more efficient from a parsing perspective, and it allows a common interface with other parsers (SafeCopy)
@@ -97,6 +47,10 @@ instance AcidSerialiseEvent AcidSerialiserJSON where
   deserialiseEventStream  _ ps = connectEitherConduit checkSumConduit $
     deserialiseEventStreamWithPartialParser (findJSONParserForWrappedEvent ps)
 
+handleJSONParserResult :: JSONResult a -> Either Text (Either (PartialParserBS a) (BS.ByteString, a))
+handleJSONParserResult (JSONResultFail err) = Left $ err
+handleJSONParserResult (JSONResultPartial p) = Right . Left $ (PartialParser $ \bs -> handleJSONParserResult $ p bs)
+handleJSONParserResult (JSONResultDone (bs, a)) = Right . Right $ (bs, a)
 
 jsonPartialParser :: (FromJSON a) => PartialParserBS a
 jsonPartialParser = PartialParser $ \t -> handleJSONParserResult $ eitherPartialDecode' t

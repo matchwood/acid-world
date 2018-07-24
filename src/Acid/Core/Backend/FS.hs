@@ -63,7 +63,7 @@ instance AcidWorldBackend AcidWorldBackendFS where
     aWBConfigGzip :: Bool
   }
   backendConfigInfo c = "Gzip: " <> showT (aWBConfigGzip c)
-  type AWBSerialiseT AcidWorldBackendFS = Builder
+  type AWBSerialiseT AcidWorldBackendFS = BL.ByteString
   type AWBSerialiseConduitT AcidWorldBackendFS = BS.ByteString
   initialiseBackend c t = do
     stateP <- Dir.makeAbsolute (aWBConfigFSStateDir c)
@@ -109,7 +109,7 @@ instance AcidWorldBackend AcidWorldBackendFS where
   handleUpdateEventC serializer s awu ec act = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
     eBind (runUpdateC awu ec) $ \(es, r) -> do
         stEs <- mkStorableEvents es
-        hPutBuilder hdl $ serializer stEs
+        BL.hPut hdl $ serializer stEs
         hFlush hdl
         ioR <- act r
         pure . Right $ (r, ioR)

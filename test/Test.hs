@@ -4,7 +4,6 @@ import Shared.App
 
 import RIO
 import qualified RIO.Text as T
-import qualified RIO.ByteString.Lazy as BL
 import qualified RIO.List as L
 import qualified RIO.Directory as Dir
 
@@ -13,7 +12,6 @@ import Acid.World
 import Test.Tasty
 import Test.Tasty.QuickCheck
 import Test.Tasty.HUnit
-import Data.ByteString.Builder
 
 import qualified Data.IxSet.Typed as IxSet
 
@@ -22,23 +20,6 @@ import qualified Test.QuickCheck.Property as QCP
 
 
 
-{-
-
-testCheckSum :: IO ()
-testCheckSum = do
-  let a = "asdfsdf "
-      b = "sadfdsfsdf"
-      c = a <> b
-
-      checkA = lazyCRCDigest $ c
-      checkB = lazyCRCDigest2 $ c
-
-  traceM $ showT checkA
-  traceM $ showT checkB
-  let checked = checkCRCLazy (checkA, c)
-  if (checkA  == checkB)
-    then pure ()
-    else traceM $ "IT FAILED"-}
 
 withBackends :: (AppValidBackend -> AppValidSerialiser -> [TestTree]) -> [(AppValidBackend, [AppValidSerialiser])] -> [TestTree]
 withBackends f os =
@@ -119,7 +100,7 @@ prop_serialiseEventEqualDeserialise o = forAll genStorableEvent $ \e ->
   let serialised = serialiseStorableEvent o e
       deserialisedE = deserialiseStorableEvent o serialised
   in case deserialisedE of
-      Left r -> property $ QCP.failed {QCP.reason = T.unpack $ "Error encountered when deserialising: " <> r <> showT ( toLazyByteString (serialised))}
+      Left r -> property $ QCP.failed {QCP.reason = T.unpack $ "Error encountered when deserialising: " <> r <> showT ((serialised))}
       Right e' -> e === e'
 
 
