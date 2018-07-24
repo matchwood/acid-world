@@ -84,16 +84,18 @@ consumeMatchAndParse _ aMatch bs = do
 instance AcidSerialiseEvent AcidSerialiserJSON where
   data AcidSerialiseEventOptions AcidSerialiserJSON = AcidSerialiserJSONOptions
   type AcidSerialiseParser AcidSerialiserJSON ss nn = PartialParserBS (WrappedEvent ss nn)
-  type AcidSerialiseT AcidSerialiserJSON = BL.ByteString
+  type AcidSerialiseT AcidSerialiserJSON = Builder
   type AcidSerialiseConduitT AcidSerialiserJSON = BS.ByteString
+  serialiserFileExtension _ = ".json"
   -- due to the constraints of json (single top level object) we have a choice between some kind of separation between events (newline) or to simply write out the event name followed by the event. we choose the latter because it should be more efficient from a parsing perspective, and it allows a common interface with other parsers (SafeCopy)
-  serialiseStorableEvent :: forall ss nn n.(AcidSerialiseConstraint AcidSerialiserJSON ss n) => AcidSerialiseEventOptions AcidSerialiserJSON -> StorableEvent ss nn n -> BL.ByteString
-  serialiseStorableEvent _ se = Aeson.encode (toUniqueText (Proxy :: Proxy n)) <> (Aeson.encode se)
+  serialiseStorableEvent :: forall ss nn n.(AcidSerialiseConstraint AcidSerialiserJSON ss n) => AcidSerialiseEventOptions AcidSerialiserJSON -> StorableEvent ss nn n -> AcidSerialiseT AcidSerialiserJSON
+  serialiseStorableEvent _ se = addCRC $ Aeson.encode (toUniqueText (Proxy :: Proxy n)) <> (Aeson.encode se)
   deserialiseStorableEvent :: forall ss nn n. (AcidSerialiseConstraint AcidSerialiserJSON ss n) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseT AcidSerialiserJSON -> (Either Text (StorableEvent ss nn n))
-  deserialiseStorableEvent _ = consumeMatchAndParse (Proxy :: Proxy Text) (toUniqueText (Proxy :: Proxy n))
+  deserialiseStorableEvent _ t = consumeMatchAndParse (Proxy :: Proxy Text) (toUniqueText (Proxy :: Proxy n)) =<< checkAndConsumeCRC t
   makeDeserialiseParsers _ _ _ = makeJSONParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
-  deserialiseEventStream  _ ps = deserialiseEventStreamWithPartialParser (findJSONParserForWrappedEvent ps)
+  deserialiseEventStream  _ ps = connectEitherConduit checkSumConduit $
+    deserialiseEventStreamWithPartialParser (findJSONParserForWrappedEvent ps)
 
 
 jsonPartialParser :: (FromJSON a) => PartialParserBS a

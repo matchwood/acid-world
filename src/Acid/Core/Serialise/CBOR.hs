@@ -41,13 +41,14 @@ type CBOREventParser ss nn = (BS.ByteString -> Either Text (Maybe (BS.ByteString
 instance AcidSerialiseEvent AcidSerialiserCBOR where
   data AcidSerialiseEventOptions AcidSerialiserCBOR = AcidSerialiserCBOROptions
   type AcidSerialiseParser AcidSerialiserCBOR ss nn = CBOREventParser ss nn
-  type AcidSerialiseT AcidSerialiserCBOR = BL.ByteString
+  type AcidSerialiseT AcidSerialiserCBOR = Builder
   type AcidSerialiseConduitT AcidSerialiserCBOR = BS.ByteString
-  serialiseStorableEvent o se = toLazyByteString $ serialiseCBOREvent o se
-  deserialiseStorableEvent o bs = left (T.pack . show) $ decodeOrFail (deserialiseCBOREvent o) bs
+  serialiserFileExtension _ = ".cbor"
+  serialiseStorableEvent o se = addCRC $ toLazyByteString $ serialiseCBOREvent o se
+  deserialiseStorableEvent o t = (left (T.pack . show)) . decodeOrFail (deserialiseCBOREvent o) =<< checkAndConsumeCRC t
   makeDeserialiseParsers _ _ _ = makeCBORParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserCBOR -> AcidSerialiseParsers AcidSerialiserCBOR ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
-  deserialiseEventStream  _ ps = awaitForever (loop Nothing)
+  deserialiseEventStream  _ ps = connectEitherConduit checkSumConduit $ awaitForever (loop Nothing)
     where
       loop :: (Maybe (CBOREventParser ss nn)) -> BS.ByteString ->  ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ()
       loop Nothing t = do

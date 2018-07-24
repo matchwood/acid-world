@@ -49,7 +49,7 @@ openAcidWorld :: forall m ss nn b uMonad t.
                , ValidSegmentsSerialise t ss
                ) => SegmentsState ss -> Invariants ss -> AWBConfig b -> AWConfig uMonad ss -> AcidSerialiseEventOptions t ->  m (Either AWException (AcidWorld ss nn t))
 openAcidWorld acidWorldDefaultState acidWorldInvariants acidWorldBackendConfig acidWorldStateConfig acidWorldSerialiserOptions = do
-  eBind (initialiseBackend acidWorldBackendConfig) $ \acidWorldBackendState -> do
+  eBind (initialiseBackend acidWorldBackendConfig acidWorldSerialiserOptions) $ \acidWorldBackendState -> do
     let parsers = makeDeserialiseParsers acidWorldSerialiserOptions (Proxy :: Proxy ss) (Proxy :: Proxy nn)
     let handles = BackendHandles {
             bhLoadEvents = (loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState) :: m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),

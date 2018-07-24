@@ -26,16 +26,16 @@ class AcidWorldBackend (b :: k) where
   backendConfigInfo :: AWBConfig b -> Text
   default backendConfigInfo :: (Show (AWBConfig b)) => AWBConfig b -> Text
   backendConfigInfo = showT
-  initialiseBackend :: (MonadIO m) => AWBConfig b -> m (Either AWException (AWBState b))
+  initialiseBackend :: (MonadIO m, AcidSerialiseEvent t) => AWBConfig b -> AcidSerialiseEventOptions t -> m (Either AWException (AWBState b))
   closeBackend :: (MonadIO m) => AWBState b -> m ()
   closeBackend _ = pure ()
 
 
-  createCheckpointBackend :: (AcidSerialiseConduitT t ~ AWBSerialiseConduitT b, MonadUnliftIO m, MonadThrow m, PrimMonad m, ValidAcidWorldState u ss, ValidSegmentsSerialise t ss ) =>  AWBState b -> AWState u ss -> AcidSerialiseEventOptions t -> m ()
+  createCheckpointBackend :: (AcidSerialiseEvent t, AcidSerialiseConduitT t ~ AWBSerialiseConduitT b, MonadUnliftIO m, MonadThrow m, PrimMonad m, ValidAcidWorldState u ss, ValidSegmentsSerialise t ss ) =>  AWBState b -> AWState u ss -> AcidSerialiseEventOptions t -> m ()
   createCheckpointBackend _ _ _ = pure ()
 
   -- should return the most recent checkpoint state, if any
-  getInitialState :: (MonadUnliftIO m, PrimMonad m, MonadThrow m, AcidSerialiseConduitT t ~ AWBSerialiseConduitT b, ValidSegmentsSerialise t ss ) => SegmentsState ss -> AWBState b -> AcidSerialiseEventOptions t -> m (Either AWException (SegmentsState ss))
+  getInitialState :: (AcidSerialiseEvent t, MonadUnliftIO m, PrimMonad m, MonadThrow m, AcidSerialiseConduitT t ~ AWBSerialiseConduitT b, ValidSegmentsSerialise t ss ) => SegmentsState ss -> AWBState b -> AcidSerialiseEventOptions t -> m (Either AWException (SegmentsState ss))
   getInitialState defState _ _ = pure . pure $ defState
   -- return events since the last checkpoint, if any
   loadEvents :: (MonadIO m) => (ConduitT (AWBSerialiseConduitT b) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->  AWBState b -> m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())

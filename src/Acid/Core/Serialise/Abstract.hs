@@ -18,6 +18,7 @@ import GHC.Exts (Constraint)
 import Data.Proxy(Proxy(..))
 
 import Acid.Core.Segment
+import Acid.Core.Utils
 import Acid.Core.State
 import Data.Typeable
 import qualified  Data.Vinyl.TypeLevel as V
@@ -28,6 +29,8 @@ import qualified  Data.Digest.CRC as CRC
 import qualified  Data.Digest.CRC32 as CRC
 import Data.ByteString.Builder
 import Data.Serialize
+import Data.Bits
+import qualified RIO.Vector.Unboxed.Partial as VUnboxedPartial
 
 {-
 
@@ -37,12 +40,12 @@ class (Semigroup (AcidSerialiseT t), Monoid (AcidSerialiseT t)) => AcidSerialise
   data AcidSerialiseEventOptions t :: *
   type AcidSerialiseT t :: *
   type AcidSerialiseConduitT t :: *
-
   type AcidSerialiseParser t (ss :: [Symbol]) (nn :: [Symbol]) :: *
-
+  serialiserFileExtension :: AcidSerialiseEventOptions t -> FilePath
+  serialiserFileExtension _ = ".log"
   tConversions :: AcidSerialiseEventOptions t -> (AcidSerialiseT t -> AcidSerialiseConduitT t, AcidSerialiseConduitT t -> AcidSerialiseT t)
-  default tConversions :: (AcidSerialiseT t ~ BL.ByteString, AcidSerialiseConduitT t ~ BS.ByteString) => AcidSerialiseEventOptions t -> (AcidSerialiseT t -> AcidSerialiseConduitT t, AcidSerialiseConduitT t -> AcidSerialiseT t)
-  tConversions _ = (BL.toStrict, BL.fromStrict)
+  default tConversions :: (AcidSerialiseT t ~ Builder, AcidSerialiseConduitT t ~ BS.ByteString) => AcidSerialiseEventOptions t -> (AcidSerialiseT t -> AcidSerialiseConduitT t, AcidSerialiseConduitT t -> AcidSerialiseT t)
+  tConversions _ = (BL.toStrict . toLazyByteString, lazyByteString . BL.fromStrict)
   serialiserName :: Proxy t -> Text
   default serialiserName :: (Typeable t) => Proxy t -> Text
 
@@ -91,9 +94,10 @@ checkAndConsumeCRC b = do
 
 checkCRCLazy :: (CRC.CRC32, BL.ByteString) -> Either Text BL.ByteString
 checkCRCLazy (check, content) =
-  if check == lazyCRCDigest content
-    then pure content
-    else Left $ "Lazy bytestring failed checksum when reading"
+  let h = lazyCRCDigest content
+  in if check == h
+      then pure content
+      else Left $ "Lazy bytestring failed checksum when reading: expected " <> showT check <> " but got " <> showT h
 
 checkCRCStrict :: (CRC.CRC32, BS.ByteString) -> Either Text BS.ByteString
 checkCRCStrict (check, content) =
@@ -137,17 +141,31 @@ handleDataDotSerializeParserResult (Fail err _) = Left . T.pack $ err
 handleDataDotSerializeParserResult (Partial p) = Right . Left $ (PartialParser $ \bs -> handleDataDotSerializeParserResult $ p bs)
 handleDataDotSerializeParserResult (Done a bs) = Right . Right $ (bs, a)
 
+connectEitherConduit :: forall a b c d m. (Monad m) => ConduitT a (Either b c) m () -> ConduitT c (Either b d) m () -> ConduitT a (Either b d) m ()
+connectEitherConduit origCond eCond = origCond .| passCond
+  where
+    passCond :: ConduitT (Either b c) (Either b d) m ()
+    passCond = awaitForever loop
+      where
+        loop :: (Either b c) -> ConduitT (Either b c) (Either b d) m ()
+        loop (Left b) = yield $ Left b
+        loop (Right d) = yieldMany [d] .| eCond
 
 checkSumConduit :: (Monad m) => ConduitT BS.ByteString (Either Text BS.ByteString) m ()
 checkSumConduit = deserialiseWithPartialParserTransformer $ fmapPartialParser checkCRCStrict $
   (PartialParser $ \t -> (handleDataDotSerializeParserResult $ runGetPartial readWithCheckSumStrict t))
 
-lazyCRCDigest :: forall a. (CRC.CRC a) => BL.ByteString -> a
-lazyCRCDigest = loop CRC.initCRC
+lazyCRCDigest :: BL.ByteString -> CRC.CRC32
+lazyCRCDigest = updateDigest32Lazy CRC.initCRC
+
+updateDigest32Lazy :: CRC.CRC32 -> BL.ByteString -> CRC.CRC32
+updateDigest32Lazy crc = xorFinal . BL.foldl go crc
   where
-    loop :: a -> BL.ByteString -> a
-    loop a (BL.Chunk chunk bs') = loop (CRC.updateDigest a chunk) bs'
-    loop a (BL.Empty) = a
+    xorFinal (CRC.CRC32 x) = CRC.CRC32 (x `xor` 0xffffffff)
+    go (CRC.CRC32 crc') b8 =
+      let idx = fromIntegral (crc' `xor` b32) .&. 0xff
+          b32 = fromIntegral b8
+      in CRC.CRC32 (((crc' `shiftR` 8) .&. 0x00ffffff) `xor` (CRC.crcTable VUnboxedPartial.! idx))
 
 
 class AcidSerialiseC t where
