@@ -99,21 +99,56 @@ instance AcidWorldBackend AcidWorldBackendFS where
     liftIO $ hClose hdl
     pure (error "AcidWorldBackendFS has been closed", ())
 
-  loadEvents deserialiseConduit s = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
-      pure $
-           sourceHandle hdl .|
-           deserialiseConduit
+  loadEvents :: forall m t ss nn i. (MonadIO m, AcidSerialiseEvent t) => (ConduitT (AWBSerialiseConduitT AcidWorldBackendFS) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->  AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either AWException (m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())))
+  loadEvents deserialiseConduit s t =  do
+    let cPath = makeEventsCheckPath (aWBStateFSConfig s) t
+    exists <- Dir.doesFileExist cPath
 
+    expectedLastEventId <-
+      if exists
+        then fmap ((fmap Just  . eventIdFromText) . decodeUtf8Lenient) $ BS.readFile (makeEventsCheckPath (aWBStateFSConfig s) t)
+        else pure . Right $ Nothing
+    case expectedLastEventId of
+      Left err -> pure . Left $ AWExceptionEventSerialisationError err
+      Right lastEventId -> pure . pure . pure $
+        withTMVar (aWBStateFSEventsHandle s) $ \hdl ->
+          sourceHandle hdl .|
+          deserialiseConduit .|
+          checkLastEventIdConduit lastEventId
 
+    where
+      checkLastEventIdConduit :: Maybe EventId -> (ConduitT (Either Text (WrappedEvent ss nn)) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
+      checkLastEventIdConduit inEId = await >>= loop inEId
+        where
+          loop :: Maybe EventId -> Maybe (Either Text (WrappedEvent ss nn)) -> (ConduitT (Either Text (WrappedEvent ss nn)) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
+          loop Nothing Nothing = pure ()
+          loop (Just eId) Nothing = yield (Left $ "Expected event with id " <> showT eId <> " to be the last entry in this log but it was never encountered")
+          loop Nothing (Just _) = pure () -- @todo we encountered an event that wasn't fully persisted - we should logWarn this (@log) and rewrite the event log without it!
+          loop e (Just (Left err)) = yield (Left err) >> await >>= loop e
+          loop (Just eId) (Just (Right we)) = do
+            nextEvent <- await
+            case nextEvent of
+              (Just a) -> yield a >> await >>= loop (Just eId)
+              Nothing ->
+                if eId == wrappedEventId we
+                  then yield $ Right we
+                  else yield (Left $ "Events log check failed - expected final event with id " <> showT eId <> " but got " <> showT (wrappedEventId we))
   -- @todo this should be bracketed including bracketing the io action. Also the IO action should perhaps be restricted (if it loops to this then there will be trouble!). The internal state also needs to be rolled back if any part of this fails
-  handleUpdateEventC serializer s awu ec act = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
-    eBind (runUpdateC awu ec) $ \(es, r, onSuccess, _onFail) -> do
+  handleUpdateEventC serializer s awu t ec act = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
+    eBind (runUpdateC awu ec) $ \(es, r, onSuccess, onFail) -> do
         stEs <- mkStorableEvents es
-        BL.hPut hdl $ serializer stEs
-        hFlush hdl
-        ioR <- act r
-        onSuccess
-        pure . Right $ (r, ioR)
+
+        case extractLastEventId stEs of
+          Nothing -> onFail >> (pure . Left $ AWExceptionEventSerialisationError "Could not extract event id, this can only happen if the passed eventC contains no events")
+          Just lastEventId -> do
+            ioR <- act r
+
+            BL.hPut hdl $ serializer stEs
+            hFlush hdl
+            BS.writeFile (makeEventsCheckPath (aWBStateFSConfig s) t) (encodeUtf8 $ eventIdToText lastEventId)
+
+            onSuccess
+            pure . Right $ (r, ioR)
 
 
 
@@ -234,3 +269,6 @@ makeSegmentCheckPath c ps t = makeSegmentPath c ps t <> ".check"
 
 makeEventPath :: AcidSerialiseEvent t => AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> FilePath
 makeEventPath c t = currentStateFolder c <> "/" <> "events" <> serialiserFileExtension t
+
+makeEventsCheckPath :: AcidSerialiseEvent t => AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> FilePath
+makeEventsCheckPath c t = makeEventPath c t <> ".check"

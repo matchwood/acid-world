@@ -7,6 +7,7 @@ import RIO
 import qualified  RIO.Text as T
 import qualified  RIO.List as L
 import qualified  RIO.Time as Time
+
 import qualified  RIO.HashMap as HM
 
 import Generics.SOP
@@ -174,7 +175,7 @@ askSegmentsState = fmap npToSegmentsState askStateNp
 
 
 data BackendHandles m ss nn = BackendHandles {
-    bhLoadEvents :: forall i. MonadIO m => m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),
+    bhLoadEvents :: MonadIO m => m (ConduitT () (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),
     bhGetInitialState :: MonadIO m => m ((Either AWException (SegmentsState ss)))
   }
 
@@ -243,6 +244,16 @@ instance (All Eq xs) => Eq (EventArgsContainer xs) where
 
 newtype EventId = EventId{uuidFromEventId :: UUID.UUID} deriving(Show, Eq, ToJSON, FromJSON)
 
+
+eventIdToText :: EventId -> Text
+eventIdToText = UUID.toText . uuidFromEventId
+
+eventIdFromText :: Text -> Either Text EventId
+eventIdFromText bs =
+  case UUID.fromText bs of
+    Nothing -> Left "Could not parse event id from Text"
+    Just u -> pure . EventId $ u
+
 data Event (n :: k) where
   Event :: (Eventable n, EventArgs n ~ xs, All Eq xs, All Show xs) => EventArgsContainer xs -> Event n
 
@@ -269,6 +280,12 @@ data StorableEvent ss nn n = StorableEvent {
   } deriving (Eq, Show)
 
 
+extractLastEventId :: (SListI ns) => NP (StorableEvent ss nn) ns -> Maybe EventId
+extractLastEventId np = L.lastMaybe $ extractEventIds np
+
+
+extractEventIds :: (SListI ns) => NP (StorableEvent ss nn) ns -> [EventId]
+extractEventIds np = collapse_NP $ map_NP (K .storableEventId) np
 
 mkStorableEvents :: forall m ns ss nn. (MonadIO m, SListI ns) => NP Event ns -> m (NP (StorableEvent ss nn) ns)
 mkStorableEvents np = sequence'_NP stCompNp
@@ -281,6 +298,11 @@ mkStorableEvent e = do
   t <- Time.getCurrentTime
   uuid <- liftIO $ UUID.nextRandom
   return $ StorableEvent t (EventId uuid) e
+
+
+wrappedEventId :: WrappedEvent ss nn -> EventId
+wrappedEventId (WrappedEvent s) = storableEventId s
+
 
 data WrappedEvent ss nn where
   WrappedEvent :: (HasSegmentsAndInvars ss (EventSegments n)) => StorableEvent ss nn n -> WrappedEvent ss nn

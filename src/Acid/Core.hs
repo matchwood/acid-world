@@ -51,16 +51,17 @@ openAcidWorld :: forall m ss nn b uMonad t.
 openAcidWorld acidWorldDefaultState acidWorldInvariants acidWorldBackendConfig acidWorldStateConfig acidWorldSerialiserOptions = do
   eBind (initialiseBackend acidWorldBackendConfig acidWorldSerialiserOptions) $ \acidWorldBackendState -> do
     let parsers = makeDeserialiseParsers acidWorldSerialiserOptions (Proxy :: Proxy ss) (Proxy :: Proxy nn)
-    let handles = BackendHandles {
-            bhLoadEvents = (loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState) :: m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),
-            bhGetInitialState = getInitialState acidWorldDefaultState acidWorldBackendState acidWorldSerialiserOptions
-          }
-    eAcidWorldState <- initialiseState acidWorldStateConfig handles acidWorldInvariants
-    case eAcidWorldState of
-      Left err -> do
-        closeBackend acidWorldBackendState
-        pure . Left $ err
-      Right acidWorldState ->  pure . pure $ AcidWorld{..}
+    eBind (loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState acidWorldSerialiserOptions  :: m (Either AWException (m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())))) $ \lEvents -> do
+      let handles = BackendHandles {
+              bhLoadEvents = lEvents,
+              bhGetInitialState = getInitialState acidWorldDefaultState acidWorldBackendState acidWorldSerialiserOptions
+            }
+      eAcidWorldState <- initialiseState acidWorldStateConfig handles acidWorldInvariants
+      case eAcidWorldState of
+        Left err -> do
+          closeBackend acidWorldBackendState
+          pure . Left $ err
+        Right acidWorldState ->  pure . pure $ AcidWorld{..}
 
 closeAcidWorld :: (MonadIO m) => AcidWorld ss nn t -> m ()
 closeAcidWorld (AcidWorld {..}) = do
@@ -81,7 +82,7 @@ updateC :: forall ss nn firstN ns m t. (All (IsValidEvent ss nn) (firstN ': ns),
 updateC aw ec = (fmap  . fmap) fst $ updateCWithIO aw ec (const $ pure ())
 
 updateCWithIO :: forall ss nn firstN ns m t ioRes. (All (IsValidEvent ss nn) (firstN ': ns), All (ValidEventName ss) (firstN ': ns), MonadIO m, AcidSerialiseConstraintAll t ss  (firstN ': ns)) => AcidWorld ss nn t -> EventC (firstN ': ns) -> (EventResult firstN -> m ioRes) -> m (Either AWException (EventResult firstN, ioRes))
-updateCWithIO (AcidWorld {..}) ec = handleUpdateEventC ((serialiseEventNP acidWorldSerialiserOptions) :: NP (StorableEvent ss nn) (firstN ': ns) -> AcidSerialiseT t)  acidWorldBackendState acidWorldState ec
+updateCWithIO (AcidWorld {..}) ec = handleUpdateEventC ((serialiseEventNP acidWorldSerialiserOptions) :: NP (StorableEvent ss nn) (firstN ': ns) -> AcidSerialiseT t)  acidWorldBackendState acidWorldState acidWorldSerialiserOptions ec
 
 query ::forall ss nn t m a. MonadIO m => AcidWorld ss nn t -> (forall i. ValidAcidWorldState i ss => AWQuery i ss a) -> m a
 query (AcidWorld {..}) q = runQuery acidWorldState q
