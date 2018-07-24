@@ -43,8 +43,8 @@ instance AcidSerialiseEvent AcidSerialiserCBOR where
   type AcidSerialiseParser AcidSerialiserCBOR ss nn = CBOREventParser ss nn
   type AcidSerialiseT AcidSerialiserCBOR = BL.ByteString
   type AcidSerialiseConduitT AcidSerialiserCBOR = BS.ByteString
-  serialiseEvent o se = toLazyByteString $ serialiseCBOREvent o se
-  deserialiseEvent o bs = left (T.pack . show) $ decodeOrFail (deserialiseCBOREvent o) bs
+  serialiseStorableEvent o se = toLazyByteString $ serialiseCBOREvent o se
+  deserialiseStorableEvent o bs = left (T.pack . show) $ decodeOrFail (deserialiseCBOREvent o) bs
   makeDeserialiseParsers _ _ _ = makeCBORParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserCBOR -> AcidSerialiseParsers AcidSerialiserCBOR ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
   deserialiseEventStream  _ ps = awaitForever (loop Nothing)
@@ -156,10 +156,12 @@ serialiseCBOREvent _ se = encode (toUniqueText (Proxy :: Proxy n)) <> encode se
 
 
 
-deserialiseCBOREvent :: (CanSerialiseCBOR ss n) => AcidSerialiseEventOptions AcidSerialiserCBOR -> Decoder s (StorableEvent ss nn n)
+deserialiseCBOREvent :: forall ss nn n s. (CanSerialiseCBOR ss n) => AcidSerialiseEventOptions AcidSerialiserCBOR -> Decoder s (StorableEvent ss nn n)
 deserialiseCBOREvent _ = do
-  (_ :: Text) <- decode
-  decode
+  (a :: Text) <- decode
+  if a == toUniqueText (Proxy :: Proxy n)
+    then decode
+    else  fail $ "Expected " <> T.unpack (toUniqueText (Proxy :: Proxy n)) <> " when consuming prefix, but got " <> show a
 
 
 

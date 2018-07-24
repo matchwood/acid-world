@@ -35,15 +35,15 @@ instance AcidSerialiseEvent AcidSerialiserSafeCopy where
   type AcidSerialiseParser AcidSerialiserSafeCopy ss nn = PartialParserBS (WrappedEvent ss nn)
   type AcidSerialiseT AcidSerialiserSafeCopy = BL.ByteString
   type AcidSerialiseConduitT AcidSerialiserSafeCopy = BS.ByteString
-  serialiseEvent o se = runPutLazy $ serialiseSafeCopyEvent o se
-  deserialiseEvent o t = left (T.pack) $ runGetLazy (deserialiseSafeCopyEvent o) t
+  serialiseStorableEvent o se = runPutLazy $ serialiseSafeCopyEvent o se
+  deserialiseStorableEvent o t = left (T.pack) $ runGetLazy (deserialiseSafeCopyEvent o) t
   makeDeserialiseParsers _ _ _ = makeSafeCopyParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserSafeCopy -> AcidSerialiseParsers AcidSerialiserSafeCopy ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
   deserialiseEventStream  _ ps = deserialiseEventStreamWithPartialParser (findSafeCopyParserForWrappedEvent ps)
 
 
 safeCopyPartialParser :: (SafeCopy a) => PartialParserBS a
-safeCopyPartialParser = PartialParser $ \t -> handleSafeCopyParserResult $ runGetPartial safeGet t
+safeCopyPartialParser = PartialParser $ \t -> handleDataDotSerializeParserResult $ runGetPartial safeGet t
 
 findSafeCopyParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserSafeCopy ss nn -> PartialParserBS ( PartialParserBS (WrappedEvent ss nn))
 findSafeCopyParserForWrappedEvent ps = fmapPartialParser findSafeCopyParser safeCopyPartialParser
@@ -71,7 +71,7 @@ instance AcidSerialiseC AcidSerialiserSafeCopy where
 instance (SafeCopy seg) => AcidSerialiseSegment AcidSerialiserSafeCopy seg where
   serialiseSegment _ seg = sourceLazy $ runPutLazy $ safePut seg
   deserialiseSegment :: forall m o. (Monad m) => AcidSerialiseEventOptions AcidSerialiserSafeCopy -> ConduitT BS.ByteString o m (Either Text seg)
-  deserialiseSegment _ = deserialiseSegmentWithPartialParser safeCopyPartialParser
+  deserialiseSegment _ = deserialiseWithPartialParserSink safeCopyPartialParser
 
 
 
@@ -92,10 +92,6 @@ decodeWrappedEventSafeCopy _ = fmapPartialParser (pure . (WrappedEvent :: Storab
 
 
 
-handleSafeCopyParserResult :: Result a -> Either Text (Either (PartialParserBS a) (BS.ByteString, a))
-handleSafeCopyParserResult (Fail err _) = Left . T.pack $ err
-handleSafeCopyParserResult (Partial p) = Right . Left $ (PartialParser $ \bs -> handleSafeCopyParserResult $ p bs)
-handleSafeCopyParserResult (Done a bs) = Right . Right $ (bs, a)
 
 
 serialiseSafeCopyEvent :: forall ss nn n. (CanSerialiseSafeCopy ss n) => AcidSerialiseEventOptions AcidSerialiserSafeCopy -> StorableEvent ss nn n -> Put
@@ -106,8 +102,12 @@ serialiseSafeCopyEvent _ se = do
 
 deserialiseSafeCopyEvent :: forall ss nn n. (CanSerialiseSafeCopy ss n) => AcidSerialiseEventOptions AcidSerialiserSafeCopy -> Get (StorableEvent ss nn n)
 deserialiseSafeCopyEvent _ = do
-  (_ :: BS.ByteString) <- safeGet
-  safeGet
+  (a :: Text) <- fmap decodeUtf8Lenient safeGet
+  if a == toUniqueText (Proxy :: Proxy n)
+    then safeGet
+    else  fail $ "Expected " <> T.unpack (toUniqueText (Proxy :: Proxy n)) <> " when consuming prefix, but got " <> show a
+
+
 
 
 instance (CanSerialiseSafeCopy ss n) => SafeCopy (StorableEvent ss nn n) where

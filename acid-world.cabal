@@ -50,7 +50,8 @@ library
     STMonadTrans,
     attoparsec,
     cryptonite,
-    memory
+    memory,
+    crc
 
 
   hs-source-dirs:      src

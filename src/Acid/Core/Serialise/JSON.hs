@@ -73,10 +73,12 @@ eitherDecodeLeftoverWith p tra s =
                           IError path msg -> Left (T.pack $ formatError path msg)
       Atto.L.Fail _ _ msg -> Left (T.pack msg)
 
-consumeAndParse :: forall a b. (FromJSON a, FromJSON b) => Proxy a -> BL.ByteString -> Either Text b
-consumeAndParse _ bs = do
-  (bs', (_ :: a)) <- eitherDecodeLeftover bs
-  fmap snd $ eitherDecodeLeftover bs'
+consumeMatchAndParse :: forall a b. (FromJSON a, FromJSON b, Eq a, Show a) => Proxy a -> a -> BL.ByteString -> Either Text b
+consumeMatchAndParse _ aMatch bs = do
+  (bs', (a :: a)) <- eitherDecodeLeftover bs
+  if a == aMatch
+    then fmap snd $ eitherDecodeLeftover bs'
+    else Left $ "Expected " <> showT aMatch <> " when consuming prefix, but got " <> showT a
 
 
 instance AcidSerialiseEvent AcidSerialiserJSON where
@@ -85,9 +87,10 @@ instance AcidSerialiseEvent AcidSerialiserJSON where
   type AcidSerialiseT AcidSerialiserJSON = BL.ByteString
   type AcidSerialiseConduitT AcidSerialiserJSON = BS.ByteString
   -- due to the constraints of json (single top level object) we have a choice between some kind of separation between events (newline) or to simply write out the event name followed by the event. we choose the latter because it should be more efficient from a parsing perspective, and it allows a common interface with other parsers (SafeCopy)
-  serialiseEvent :: forall ss nn n.(AcidSerialiseConstraint AcidSerialiserJSON ss n) => AcidSerialiseEventOptions AcidSerialiserJSON -> StorableEvent ss nn n -> BL.ByteString
-  serialiseEvent _ se = Aeson.encode (toUniqueText (Proxy :: Proxy n)) <> (Aeson.encode se)
-  deserialiseEvent _ = consumeAndParse (Proxy :: Proxy Text)
+  serialiseStorableEvent :: forall ss nn n.(AcidSerialiseConstraint AcidSerialiserJSON ss n) => AcidSerialiseEventOptions AcidSerialiserJSON -> StorableEvent ss nn n -> BL.ByteString
+  serialiseStorableEvent _ se = Aeson.encode (toUniqueText (Proxy :: Proxy n)) <> (Aeson.encode se)
+  deserialiseStorableEvent :: forall ss nn n. (AcidSerialiseConstraint AcidSerialiserJSON ss n) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseT AcidSerialiserJSON -> (Either Text (StorableEvent ss nn n))
+  deserialiseStorableEvent _ = consumeMatchAndParse (Proxy :: Proxy Text) (toUniqueText (Proxy :: Proxy n))
   makeDeserialiseParsers _ _ _ = makeJSONParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
   deserialiseEventStream  _ ps = deserialiseEventStreamWithPartialParser (findJSONParserForWrappedEvent ps)
@@ -114,7 +117,7 @@ instance AcidSerialiseC AcidSerialiserJSON where
 
 instance (ToJSON seg, FromJSON seg) => AcidSerialiseSegment AcidSerialiserJSON seg where
   serialiseSegment _ seg = sourceLazy $ Aeson.encode seg
-  deserialiseSegment _ = deserialiseSegmentWithPartialParser jsonPartialParser
+  deserialiseSegment _ = deserialiseWithPartialParserSink jsonPartialParser
 
 
 

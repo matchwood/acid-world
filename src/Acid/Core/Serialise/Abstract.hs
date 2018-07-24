@@ -9,6 +9,7 @@ import qualified  RIO.HashMap as HM
 import qualified  RIO.Text as T
 import qualified  RIO.ByteString as BS
 import qualified  RIO.ByteString.Lazy as BL
+import qualified  Data.ByteString.Lazy.Internal as BL
 
 import Generics.SOP
 import GHC.TypeLits
@@ -20,10 +21,13 @@ import Acid.Core.Segment
 import Acid.Core.State
 import Data.Typeable
 import qualified  Data.Vinyl.TypeLevel as V
-
+import Control.Arrow (left)
 import Conduit
 import Control.Monad.ST.Trans
-
+import qualified  Data.Digest.CRC as CRC
+import qualified  Data.Digest.CRC32 as CRC
+import Data.ByteString.Builder
+import Data.Serialize
 
 {-
 
@@ -41,9 +45,11 @@ class (Semigroup (AcidSerialiseT t), Monoid (AcidSerialiseT t)) => AcidSerialise
   tConversions _ = (BL.toStrict, BL.fromStrict)
   serialiserName :: Proxy t -> Text
   default serialiserName :: (Typeable t) => Proxy t -> Text
+
   serialiserName p = T.pack $ (showsTypeRep . typeRep $ p) ""
-  serialiseEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> StorableEvent ss nn n -> AcidSerialiseT t
-  deserialiseEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> (Either Text (StorableEvent ss nn n))
+  serialiseStorableEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> StorableEvent ss nn n -> AcidSerialiseT t
+  -- @todo we don't actually use this anywhere - perhaps just remmove it?
+  deserialiseStorableEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> (Either Text (StorableEvent ss nn n))
 
   makeDeserialiseParsers :: (ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn) => AcidSerialiseEventOptions t -> Proxy ss -> Proxy nn -> AcidSerialiseParsers t ss nn
   deserialiseEventStream :: (Monad m) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> (ConduitT (AcidSerialiseConduitT t) (Either Text (WrappedEvent ss nn)) (m) ())
@@ -57,12 +63,91 @@ fromConduitType = snd . tConversions
 
 serialiseEventNP :: (AcidSerialiseEvent t, AcidSerialiseConstraintAll t ss ns) =>  AcidSerialiseEventOptions t -> NP (StorableEvent ss nn) ns -> AcidSerialiseT t
 serialiseEventNP _ Nil = mempty
-serialiseEventNP t ((:*) se restNp) = serialiseEventNP t restNp <> serialiseEvent t se
+serialiseEventNP t ((:*) se restNp) = serialiseEventNP t restNp <> serialiseStorableEvent t se
 
 class AcidSerialiseSegment (t :: k) seg where
   serialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> seg -> ConduitT i (AcidSerialiseConduitT t) m ()
   -- we have to provide a solution here that allows proper incremental parsing, and the only way to do that with CBOR is to run the conduit with STT. It shouldn't make any difference to other serialisers.
   deserialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> ConduitT (AcidSerialiseConduitT t) o (STT s m) (Either Text seg)
+
+
+
+
+addCRC :: BL.ByteString -> Builder
+addCRC content =
+  word64LE contentLength <>
+  word32LE contentHash <>
+  lazyByteString content
+  where
+    contentLength :: Word64
+    contentLength = fromIntegral $ BL.length content
+    contentHash :: Word32
+    contentHash = CRC.crc32 $ lazyCRCDigest content
+
+checkAndConsumeCRC :: Builder -> Either Text BL.ByteString
+checkAndConsumeCRC b = do
+  r <- left T.pack $ runGetLazy readWithCheckSum (toLazyByteString b)
+  checkCRCLazy r
+
+checkCRCLazy :: (CRC.CRC32, BL.ByteString) -> Either Text BL.ByteString
+checkCRCLazy (check, content) =
+  if check == lazyCRCDigest content
+    then pure content
+    else Left $ "Lazy bytestring failed checksum when reading"
+
+checkCRCStrict :: (CRC.CRC32, BS.ByteString) -> Either Text BS.ByteString
+checkCRCStrict (check, content) =
+  if check == CRC.digest content
+    then pure content
+    else Left $ "Lazy bytestring failed checksum when reading"
+
+-- we are using serialise here just because we are adapting this code from acid-state
+readWithCheckSum :: Get (CRC.CRC32, BL.ByteString)
+readWithCheckSum = do
+  contentLength <- getWord64le
+  contentChecksum <-getWord32le
+  content <- getLazyByteString_fast (fromIntegral contentLength)
+  pure (CRC.CRC32 contentChecksum, content)
+
+readWithCheckSumStrict :: Get (CRC.CRC32, BS.ByteString)
+readWithCheckSumStrict = do
+  contentLength <- getWord64le
+  contentChecksum <-getWord32le
+  content <- getBytes (fromIntegral contentLength)
+  pure (CRC.CRC32 contentChecksum, content)
+
+-- this is directly copied from acid-state
+-- | Read a lazy bytestring WITHOUT any copying or concatenation.
+getLazyByteString_fast :: Int -> Get BL.ByteString
+getLazyByteString_fast = worker 0 []
+  where
+    worker counter acc n = do
+      remain <- remaining
+      if n > remain then do
+         chunk <- getBytes remain
+         _ <- ensure 1
+         worker (counter + remain) (chunk:acc) (n-remain)
+      else do
+         chunk <- getBytes n
+         return $ BL.fromChunks (reverse $ chunk:acc)
+
+
+handleDataDotSerializeParserResult :: Result a -> Either Text (Either (PartialParserBS a) (BS.ByteString, a))
+handleDataDotSerializeParserResult (Fail err _) = Left . T.pack $ err
+handleDataDotSerializeParserResult (Partial p) = Right . Left $ (PartialParser $ \bs -> handleDataDotSerializeParserResult $ p bs)
+handleDataDotSerializeParserResult (Done a bs) = Right . Right $ (bs, a)
+
+
+checkSumConduit :: (Monad m) => ConduitT BS.ByteString (Either Text BS.ByteString) m ()
+checkSumConduit = deserialiseWithPartialParserTransformer $ fmapPartialParser checkCRCStrict $
+  (PartialParser $ \t -> (handleDataDotSerializeParserResult $ runGetPartial readWithCheckSumStrict t))
+
+lazyCRCDigest :: forall a. (CRC.CRC a) => BL.ByteString -> a
+lazyCRCDigest = loop CRC.initCRC
+  where
+    loop :: a -> BL.ByteString -> a
+    loop a (BL.Chunk chunk bs') = loop (CRC.updateDigest a chunk) bs'
+    loop a (BL.Empty) = a
 
 
 class AcidSerialiseC t where
@@ -144,16 +229,28 @@ deserialiseEventStreamWithPartialParser initialParser = awaitForever (loop (Left
             Just nt -> loop (Right newParser) nt
         Right (Right (bs, e)) -> yield (Right e) >> (if BS.null bs then  awaitForever (loop (Left initialParser)) else loop (Left initialParser) bs)
 -- @todo we may need some strictness annotations here - I'm not 100% sure how strictness works with conduit
-deserialiseSegmentWithPartialParser :: forall seg o m. (Monad m) => PartialParserBS seg -> ConduitT BS.ByteString o m (Either Text seg)
-deserialiseSegmentWithPartialParser origParser = await >>= loop origParser
+deserialiseWithPartialParserSink :: forall a o m. (Monad m) => PartialParserBS a -> ConduitT BS.ByteString o m (Either Text a)
+deserialiseWithPartialParserSink origParser = await >>= loop origParser
     where
-      loop :: PartialParserBS seg -> Maybe BS.ByteString -> ConduitT BS.ByteString o m (Either Text seg)
+      loop :: PartialParserBS a -> Maybe BS.ByteString -> ConduitT BS.ByteString o m (Either Text a)
       loop _ Nothing = pure . Left $ "No values received in conduit when trying to parse segment"
       loop p (Just t) = do
         case runPartialParser p t of
           Left err -> pure $ Left err
           Right (Left newParser) -> await >>= loop newParser
-          Right (Right (_, seg)) -> pure $ Right seg
+          Right (Right (_, a)) -> pure $ Right a
+
+
+deserialiseWithPartialParserTransformer :: forall a m. (Monad m) => PartialParserBS a -> ConduitT BS.ByteString (Either Text a) m ()
+deserialiseWithPartialParserTransformer origParser = awaitForever $ loop origParser
+    where
+      loop :: PartialParserBS a -> BS.ByteString -> ConduitT BS.ByteString (Either Text a) m ()
+      loop p t = do
+        case runPartialParser p t of
+          Left err -> yield (Left err) >> awaitForever (loop origParser)
+          Right (Left newParser) -> awaitForever $ loop newParser
+          Right (Right (bs, a)) -> yield (Right a) >> (if BS.null bs then awaitForever (loop origParser) else loop origParser bs)
+
 
 {-
 this is a helper function for deserialising a single wrapped event - at the moment it is really just used for testing serialisation

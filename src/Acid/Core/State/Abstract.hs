@@ -26,6 +26,7 @@ import qualified  Data.Vinyl as V
 import qualified  Data.Vinyl.TypeLevel as V
 
 
+
 {-
 the main definition of an state managing strategy
 -}
@@ -266,6 +267,8 @@ data StorableEvent ss nn n = StorableEvent {
     storableEventId :: EventId,
     storableEventEvent :: Event n
   } deriving (Eq, Show)
+
+
 
 mkStorableEvents :: forall m ns ss nn. (MonadIO m, SListI ns) => NP Event ns -> m (NP (StorableEvent ss nn) ns)
 mkStorableEvents np = sequence'_NP stCompNp

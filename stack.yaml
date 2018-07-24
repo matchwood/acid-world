@@ -8,3 +8,4 @@ extra-deps:
 - basic-sop-0.2.0.2
 - serialise-0.2.0.0
 - cborg-0.2.0.0
+- crc-0.1.0.0
