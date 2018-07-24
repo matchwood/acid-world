@@ -105,13 +105,14 @@ instance AcidWorldBackend AcidWorldBackendFS where
            deserialiseConduit
 
 
-  -- this should be bracketed and restored correctly, including bracketing the io action. Also the IO action should perhaps be restricted (if it loops to this then there will be trouble!). we also need a way to undo writing the event to the file if the io action fails
+  -- @todo this should be bracketed including bracketing the io action. Also the IO action should perhaps be restricted (if it loops to this then there will be trouble!). The internal state also needs to be rolled back if any part of this fails
   handleUpdateEventC serializer s awu ec act = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
-    eBind (runUpdateC awu ec) $ \(es, r) -> do
+    eBind (runUpdateC awu ec) $ \(es, r, onSuccess, _onFail) -> do
         stEs <- mkStorableEvents es
         BL.hPut hdl $ serializer stEs
         hFlush hdl
         ioR <- act r
+        onSuccess
         pure . Right $ (r, ioR)
 
 

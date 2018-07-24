@@ -7,7 +7,7 @@ import qualified Control.Monad.State.Strict as St
 import qualified Control.Monad.Reader as Re
 import qualified  RIO.HashMap as HM
 
-import qualified Control.Concurrent.STM.TVar as  TVar
+import qualified Control.Concurrent.STM.TMVar as  TMVar
 import qualified Control.Concurrent.STM  as STM
 
 import Acid.Core.Utils
@@ -22,7 +22,7 @@ data AcidStatePureState
 
 instance AcidWorldState AcidStatePureState where
   data AWState AcidStatePureState ss = AWStatePureState {
-      aWStatePureStateState :: !(TVar (SegmentsState ss)),
+      aWStatePureStateState :: !(TMVar (SegmentsState ss)),
       awStatePureStateInvariants :: Invariants ss
     }
   data AWConfig AcidStatePureState ss = AWConfigPureState
@@ -55,7 +55,7 @@ instance AcidWorldState AcidStatePureState where
           -- run invariants
           case runAWQueryPureState (runChangedSegmentsInvariantsMap (allInvariants invars)) s of
             Nothing -> do
-              tvar <- liftIO $ STM.atomically $ TVar.newTVar s
+              tvar <- liftIO $ STM.atomically $ TMVar.newTMVar s
               pure . pure $ AWStatePureState tvar invars
             Just err -> pure . Left $ err
     where
@@ -69,21 +69,22 @@ instance AcidWorldState AcidStatePureState where
       applyToState :: SegmentsState ss -> WrappedEvent ss nn -> SegmentsState ss
       applyToState s e = snd $ runAWUpdatePureState (runWrappedEvent e) s invars
 
-  runUpdateC :: forall ss firstN ns m. (ValidAcidWorldState AcidStatePureState ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState AcidStatePureState ss -> EventC (firstN ': ns) ->  m (Either AWException (NP Event (firstN ': ns), EventResult firstN))
+  runUpdateC :: forall ss firstN ns m. (ValidAcidWorldState AcidStatePureState ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState AcidStatePureState ss -> EventC (firstN ': ns) ->  m (Either AWException (NP Event (firstN ': ns), EventResult firstN, m (), m ()))
   runUpdateC awState ec = liftIO $ STM.atomically $ do
-    s <- STM.readTVar (aWStatePureStateState awState)
+    s <- TMVar.takeTMVar (aWStatePureStateState awState)
     let (((!events, !eventResult), !invarsToRun), !s') = runAWUpdatePureState (runEventC ec) s (awStatePureStateInvariants awState)
 
     case runAWQueryPureState (runChangedSegmentsInvariantsMap invarsToRun) s' of
       Nothing -> do
-        STM.writeTVar (aWStatePureStateState awState) s'
-        pure . Right $ (events, eventResult)
-      Just errs -> pure . Left $ errs
+        pure . Right $ (events, eventResult, (liftIO . STM.atomically $ TMVar.putTMVar (aWStatePureStateState awState) s'), (liftIO . STM.atomically $ TMVar.putTMVar (aWStatePureStateState awState) s))
+      Just errs -> do
+        TMVar.putTMVar (aWStatePureStateState awState) s
+        pure . Left $ errs
 
 
   runQuery awState q = do
     liftIO $ STM.atomically $ do
-      s <- STM.readTVar (aWStatePureStateState awState)
+      s <- TMVar.readTMVar (aWStatePureStateState awState)
       pure $ runAWQueryPureState q s
   liftQuery q = do
     s <- AWUpdatePureState . lift . lift $ St.get
