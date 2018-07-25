@@ -152,26 +152,47 @@ unit_insertAndRestoreState b o step = do
 
 unit_checkpointAndRestoreState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => (FilePath -> AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
 unit_checkpointAndRestoreState b o step = do
-  us <- QC.generate $ generateUsers 1000
-  as <- QC.generate $ generateAddresses 1000
-  ps <- QC.generate $ generatePhonenumbers 1000
+  (us1, us2) <- fmap (L.splitAt 500) $ QC.generate $ generateUsers 1000
+  (ps1, ps2) <- fmap (L.splitAt 500) $ QC.generate $ generatePhonenumbers 1000
+  (as1, as2) <- fmap (L.splitAt 500) $ QC.generate $ generateAddresses 1000
   step "Opening acid world"
-  aw <- openAppAcidWorldFresh b o
-  step "Inserting users"
-  mapM_ (runInsertUser aw) us
-  step "Inserting addresses"
-  mapM_ (runInsertAddress aw) as
-  step "Inserting phonenumbers"
-  mapM_ (runInsertPhonenumber aw) ps
+  aw1 <- openAppAcidWorldFresh b o
+  step "Inserting records"
+  mapM_ (runInsertUser aw1) us1
+  mapM_ (runInsertPhonenumber aw1) ps1
+  mapM_ (runInsertAddress aw1) as1
   step "Creating checkpoint"
-  createCheckpoint aw
-  step "Closing acid world"
-  closeAcidWorld aw
-  step "Reopening acid world"
-  aw2 <- reopenAcidWorldMiddleware (pure aw)
-  step "Fetching users"
-  us2 <- query aw2 fetchUsers
-  assertBool "Fetched user list did not match inserted users" (L.sort us == L.sort us2)
+  createCheckpoint aw1
+  step "Closing and reopening acid world"
+  closeAcidWorld aw1
+
+  aw2 <- reopenAcidWorldMiddleware (pure aw1)
+  usf1 <- query aw2 fetchUsers
+  psf1 <- query aw2 fetchPhonenumbers
+  asf1 <- query aw2 fetchAddresses
+  assertBool "Fetched record list did not match inserted records" $
+    (L.sort us1 == L.sort usf1) &&
+    (L.sort ps1 == L.sort psf1) &&
+    (L.sort as1 == L.sort asf1)
+
+  step "Inserting more records"
+  mapM_ (runInsertUser aw2) us2
+  mapM_ (runInsertPhonenumber aw2) ps2
+  mapM_ (runInsertAddress aw2) as2
+  step "Closing and reopening acid world"
+  closeAcidWorld aw2
+
+  aw3 <- reopenAcidWorldMiddleware (pure aw2)
+  usf2 <- query aw3 fetchUsers
+  psf2 <- query aw3 fetchPhonenumbers
+  asf2 <- query aw3 fetchAddresses
+  assertBool "Fetched record list did not match inserted records after second reopen" $
+    (L.sort (us1 ++ us2) == L.sort usf2) &&
+    (L.sort (ps1 ++ ps2) == L.sort psf2) &&
+    (L.sort (as1 ++ as2) == L.sort asf2)
+
+
+
 
 
 unit_compositionOfEventsState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => (FilePath -> AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
