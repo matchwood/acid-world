@@ -155,6 +155,7 @@ instance AcidWorldBackend AcidWorldBackendFS where
 
             BL.hPut eHdl $ serializer stEs
             hFlush eHdl
+            -- write over the check
             liftIO $ hSeek cHdl AbsoluteSeek 0
             BS.hPut cHdl (encodeUtf8 $ eventIdToText lastEventId)
             hFlush cHdl
