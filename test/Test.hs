@@ -273,8 +273,9 @@ unit_defaultSegmentUsedOnRestore b o step = do
   closeAcidWorld aw
   --delete pn checkpoint
   let pp  = (Proxy :: Proxy "Phonenumbers")
-      segPath = makeSegmentPath conf pp o
-      segCheckPatch =  makeSegmentCheckPath conf pp o
+      cpFolder = currentCheckpointFolder conf
+      segPath = makeSegmentPath cpFolder conf pp o
+      segCheckPatch =  makeSegmentCheckPath cpFolder conf pp o
       segPathTemp = segPath <> ".temp"
 
   step "Moving segment and reopening"

@@ -22,7 +22,7 @@ data AcidStatePureState
 
 instance AcidWorldState AcidStatePureState where
   data AWState AcidStatePureState ss = AWStatePureState {
-      aWStatePureStateState :: !(TMVar (SegmentsState ss)),
+      aWStatePureStateState :: !(TMVar (SegmentsState ss)), -- @todo this implementation does not allow for queries to run while updates are running
       awStatePureStateInvariants :: Invariants ss
     }
   data AWConfig AcidStatePureState ss = AWConfigPureState
@@ -46,8 +46,7 @@ instance AcidWorldState AcidStatePureState where
 
 
     eBind bhGetInitialState $ \initState -> do
-      weStream <- bhLoadEvents
-      eS <- liftIO $ runConduitRes $ weStream .| breakOnLeft applyToState initState
+      eS <- runLoadEventsConduit bhLoadEvents (breakOnLeft applyToState initState)
       case eS of
         Left err -> pure . Left . AWExceptionEventDeserialisationError $ err
         Right s -> do
@@ -80,12 +79,9 @@ instance AcidWorldState AcidStatePureState where
       Just errs -> do
         TMVar.putTMVar (aWStatePureStateState awState) s
         pure . Left $ errs
-
-
   runQuery awState q = do
-    liftIO $ STM.atomically $ do
-      s <- TMVar.readTMVar (aWStatePureStateState awState)
-      pure $ runAWQueryPureState q s
+    s <- liftIO $ STM.atomically $ TMVar.readTMVar (aWStatePureStateState awState)
+    pure $ runAWQueryPureState q s
   liftQuery q = do
     s <- AWUpdatePureState . lift . lift $ St.get
     pure $ runAWQueryPureState q s

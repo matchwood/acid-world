@@ -6,8 +6,8 @@ import RIO
 import qualified RIO.Text as T
 import System.IO (openBinaryFile, IOMode(..))
 import qualified RIO.Directory as Dir
-import qualified  RIO.ByteString as BS
-import qualified  RIO.ByteString.Lazy as BL
+import qualified RIO.ByteString as BS
+import qualified RIO.ByteString.Lazy as BL
 import qualified Control.Concurrent.STM.TMVar as  TMVar
 import qualified Control.Concurrent.STM  as STM
 
@@ -75,15 +75,21 @@ instance AcidWorldBackend AcidWorldBackendFS where
     hdlV <- liftIO $ STM.atomically $ newTMVar hdl
     pure . pure $ AWBStateFS finalConf hdlV
   createCheckpointBackend s awu t = do
+    -- cut the current events log - as soon as this completes updates can start runnning again
     sToWrite <- modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
       let eventPath = makeEventPath (aWBStateFSConfig s) t
-          nextEventFile = eventPath <> "1"
+          oldEventFile = eventPath <> ".1"
+          eventCheckPath = makeEventsCheckPath (aWBStateFSConfig s) t
+          oldEventFileCheckPath = eventCheckPath <> ".1"
       liftIO $ hClose hdl
-      Dir.renameFile eventPath nextEventFile
+      -- @todo this should be atomic
+      Dir.renameFile eventPath oldEventFile
+      Dir.renameFile eventCheckPath oldEventFileCheckPath
       hdl' <- liftIO $ openBinaryFile eventPath ReadWriteMode
       st <- runQuery awu askStateNp
       pure (hdl', st)
     writeCheckpoint s t sToWrite
+
 
 
   getInitialState defState s t = do
@@ -92,14 +98,13 @@ instance AcidWorldBackend AcidWorldBackendFS where
     if doesExist
       then do
         let middleware = if (aWBConfigGzip  . aWBStateFSConfig $ s) then ungzip else awaitForever $ yield
-        fmap (left AWExceptionSegmentDeserialisationError) $ readLastCheckpointState middleware defState s t
+        fmap (left AWExceptionSegmentDeserialisationError) $ readLastCheckpointState middleware defState s t cpFolder
       else pure . pure $ defState
 
   closeBackend s = modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
     liftIO $ hClose hdl
     pure (error "AcidWorldBackendFS has been closed", ())
-
-  loadEvents :: forall m t ss nn i. (MonadIO m, AcidSerialiseEvent t) => (ConduitT (AWBSerialiseConduitT AcidWorldBackendFS) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->  AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either AWException (m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())))
+  loadEvents :: (MonadIO m, AcidSerialiseEvent t) => (ConduitT (AWBSerialiseConduitT AcidWorldBackendFS) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->  AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either AWException (LoadEventsConduit m ss nn))
   loadEvents deserialiseConduit s t =  do
     let cPath = makeEventsCheckPath (aWBStateFSConfig s) t
     exists <- Dir.doesFileExist cPath
@@ -110,29 +115,28 @@ instance AcidWorldBackend AcidWorldBackendFS where
         else pure . Right $ Nothing
     case expectedLastEventId of
       Left err -> pure . Left $ AWExceptionEventSerialisationError err
-      Right lastEventId -> pure . pure . pure $
-        withTMVar (aWBStateFSEventsHandle s) $ \hdl ->
+      Right lastEventId -> pure . Right  $ LoadEventsConduit $ \restConduit -> liftIO $
+        withTMVar (aWBStateFSEventsHandle s) $ \hdl -> runConduitRes $
           sourceHandle hdl .|
           deserialiseConduit .|
-          checkLastEventIdConduit lastEventId
+          checkLastEventIdConduit lastEventId .|
+          restConduit
 
     where
       checkLastEventIdConduit :: Maybe EventId -> (ConduitT (Either Text (WrappedEvent ss nn)) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
-      checkLastEventIdConduit inEId = await >>= loop inEId
+      checkLastEventIdConduit inEId = await >>= (\f -> await >>= loop inEId f)
         where
-          loop :: Maybe EventId -> Maybe (Either Text (WrappedEvent ss nn)) -> (ConduitT (Either Text (WrappedEvent ss nn)) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
-          loop Nothing Nothing = pure ()
-          loop (Just eId) Nothing = yield (Left $ "Expected event with id " <> showT eId <> " to be the last entry in this log but it was never encountered")
-          loop Nothing (Just _) = pure () -- @todo we encountered an event that wasn't fully persisted - we should logWarn this (@log) and rewrite the event log without it!
-          loop e (Just (Left err)) = yield (Left err) >> await >>= loop e
-          loop (Just eId) (Just (Right we)) = do
-            nextEvent <- await
-            case nextEvent of
-              (Just a) -> yield a >> await >>= loop (Just eId)
-              Nothing ->
-                if eId == wrappedEventId we
-                  then yield $ Right we
-                  else yield (Left $ "Events log check failed - expected final event with id " <> showT eId <> " but got " <> showT (wrappedEventId we))
+          loop :: Maybe EventId -> Maybe (Either Text (WrappedEvent ss nn)) -> Maybe (Either Text (WrappedEvent ss nn)) -> (ConduitT (Either Text (WrappedEvent ss nn)) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
+          loop Nothing Nothing _ = pure ()
+          loop (Just eId) Nothing _ = yield (Left $ "Expected event with id " <> showT eId <> " to be the last entry in this log but it was never encountered")
+          loop Nothing (Just _) _ = pure () -- @essential @todo we encountered an event (or multiple events?) that weren't fully persisted - anything after this point should be thrown away - also we should logWarn this (@log)
+          loop e (Just we1) (Just we2) = yield we1 >> await >>= loop e (Just we2)
+          loop (Just _) (Just (Left err)) Nothing = yield (Left err) -- the last entry is already an error
+          -- this is the last entry
+          loop (Just eId) (Just (Right we)) Nothing =
+            if eId == wrappedEventId we
+              then yield $ Right we
+              else yield (Left $ "Events log check failed - expected final event with id " <> showT eId <> " but got " <> showT (wrappedEventId we))
   -- @todo this should be bracketed including bracketing the io action. Also the IO action should perhaps be restricted (if it loops to this then there will be trouble!). The internal state also needs to be rolled back if any part of this fails
   handleUpdateEventC serializer s awu t ec act = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
     eBind (runUpdateC awu ec) $ \(es, r, onSuccess, onFail) -> do
@@ -154,18 +158,22 @@ instance AcidWorldBackend AcidWorldBackendFS where
 
 writeCheckpoint :: forall t sFields m. (AcidSerialiseEvent t, AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, MonadThrow m, PrimMonad m, All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()
 writeCheckpoint s t np = do
-  let cpFolder = currentCheckpointFolder (aWBStateFSConfig $ s)
-  Dir.createDirectoryIfMissing True cpFolder
+  let cpFolderFinal = currentCheckpointFolder (aWBStateFSConfig $ s)
+      cpFolderTemp = cpFolderFinal <> ".temp"
+  Dir.createDirectoryIfMissing True cpFolderTemp
+
   let middleware = if (aWBConfigGzip  . aWBStateFSConfig $ s) then gzip else awaitForever $ yield
-  let acts =  cfoldMap_NP (Proxy :: Proxy (AcidSerialiseSegmentFieldConstraint t)) ((:[]) . writeSegment middleware s t) np
+  let acts =  cfoldMap_NP (Proxy :: Proxy (AcidSerialiseSegmentFieldConstraint t)) ((:[]) . writeSegment middleware s t cpFolderTemp) np
   mapConcurrently_ id acts
 
-writeSegment :: forall t m fs. (AcidSerialiseEvent t, AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, MonadThrow m, AcidSerialiseSegmentFieldConstraint t fs) => ConduitT ByteString ByteString (ResourceT m) () -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> V.ElField fs -> m ()
-writeSegment middleware s t ((V.Field seg)) = do
+  Dir.renameDirectory cpFolderTemp cpFolderFinal
+
+writeSegment :: forall t m fs. (AcidSerialiseEvent t, AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, MonadThrow m, AcidSerialiseSegmentFieldConstraint t fs) => ConduitT ByteString ByteString (ResourceT m) () -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> FilePath -> V.ElField fs -> m ()
+writeSegment middleware s t dir (V.Field seg) = do
 
   let pp = (Proxy :: Proxy (V.Fst fs))
-      segPath = makeSegmentPath (aWBStateFSConfig $ s) pp t
-      segCheckPath = makeSegmentCheckPath (aWBStateFSConfig $ s) pp t
+      segPath = makeSegmentPath dir (aWBStateFSConfig $ s) pp t
+      segCheckPath = makeSegmentCheckPath dir (aWBStateFSConfig $ s) pp t
 
   -- we simultaneously write out the segment file and the calculated segment hash file, and check them afterwards to verify consistency of the write
   _ <-
@@ -183,8 +191,8 @@ writeSegment middleware s t ((V.Field seg)) = do
 
 
 
-readLastCheckpointState :: forall ss m t. (AcidSerialiseEvent t, ValidSegmentsSerialise t ss,  MonadUnliftIO m, AcidSerialiseConduitT t ~ BS.ByteString) =>  ConduitT ByteString ByteString (ResourceT m) () -> SegmentsState ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either Text (SegmentsState ss))
-readLastCheckpointState middleware defState s t = (fmap . fmap) (npToSegmentsState) segsNpE
+readLastCheckpointState :: forall ss m t. (AcidSerialiseEvent t, ValidSegmentsSerialise t ss,  MonadUnliftIO m, AcidSerialiseConduitT t ~ BS.ByteString) =>  ConduitT ByteString ByteString (ResourceT m) () -> SegmentsState ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> FilePath ->  m (Either Text (SegmentsState ss))
+readLastCheckpointState middleware defState s t dir = (fmap . fmap) (npToSegmentsState) segsNpE
 
   where
     segsNpE :: m (Either Text (NP V.ElField (ToSegmentFields ss)))
@@ -195,8 +203,8 @@ readLastCheckpointState middleware defState s t = (fmap . fmap) (npToSegmentsSta
     readSegmentFromProxy _ =  Comp $  fmap V.Field $  Comp $ readSegment (Proxy :: Proxy a)
     readSegment :: forall sName. (AcidSerialiseSegmentNameConstraint t sName, HasSegment ss sName) => Proxy sName -> Concurrently m (Either Text (SegmentS sName))
     readSegment ps = Concurrently $ do
-      let segPath = makeSegmentPath (aWBStateFSConfig $ s) ps t
-          segCheckPath = makeSegmentCheckPath (aWBStateFSConfig $ s) ps t
+      let segPath = makeSegmentPath dir (aWBStateFSConfig $ s) ps t
+          segCheckPath = makeSegmentCheckPath dir (aWBStateFSConfig $ s) ps t
 
       (segPathExists, segCheckPathExists) <- do
         a <- Dir.doesFileExist segPath
@@ -212,7 +220,7 @@ readLastCheckpointState middleware defState s t = (fmap . fmap) (npToSegmentsSta
             if hash /= checkHash
               then pure . Left $ "Invalid checkpoint - check file ("  <> showT segCheckPath <> ": " <> showT checkHash <> ") did not match hash of segment file" <> "(" <> showT segPath <> ": " <>  showT hash <> ")" <> " when reading segment *" <> toUniqueText ps <> "*"
               else runResourceT $ runSTT $ runConduit $
-              transPipe lift (sourceFile $ makeSegmentPath (aWBStateFSConfig $ s) ps t ) .|
+              transPipe lift (sourceFile segPath) .|
               transPipe lift middleware .|
               deserialiseSegment t
 
@@ -259,11 +267,11 @@ currentStateFolder c = (aWBConfigFSStateDir $ c) <> "/current"
 currentCheckpointFolder :: AWBConfig AcidWorldBackendFS -> FilePath
 currentCheckpointFolder c = currentStateFolder c <> "/checkpoint"
 
-makeSegmentPath :: (Segment sName, AcidSerialiseEvent t) => AWBConfig AcidWorldBackendFS ->  Proxy sName -> AcidSerialiseEventOptions t -> FilePath
-makeSegmentPath c ps t = currentCheckpointFolder c <> "/" <> T.unpack (toUniqueText ps) <> serialiserFileExtension t <> if aWBConfigGzip c then ".gz" else ""
+makeSegmentPath :: (Segment sName, AcidSerialiseEvent t) => FilePath -> AWBConfig AcidWorldBackendFS ->  Proxy sName -> AcidSerialiseEventOptions t -> FilePath
+makeSegmentPath cFolder c ps t = cFolder <> "/" <> T.unpack (toUniqueText ps) <> serialiserFileExtension t <> if aWBConfigGzip c then ".gz" else ""
 
-makeSegmentCheckPath :: (Segment sName, AcidSerialiseEvent t) => AWBConfig AcidWorldBackendFS ->  Proxy sName -> AcidSerialiseEventOptions t -> FilePath
-makeSegmentCheckPath c ps t = makeSegmentPath c ps t <> ".check"
+makeSegmentCheckPath :: (Segment sName, AcidSerialiseEvent t) => FilePath -> AWBConfig AcidWorldBackendFS ->  Proxy sName -> AcidSerialiseEventOptions t -> FilePath
+makeSegmentCheckPath dir c ps t = makeSegmentPath dir c ps t <> ".check"
 
 
 

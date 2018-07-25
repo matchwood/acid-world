@@ -125,6 +125,11 @@ runChangedSegmentsInvariantsMap hm = (fmap . fmap) AWExceptionInvariantsViolated
             Nothing -> pure . Just $ [(k, err)]
             Just errs -> pure . Just $ errs ++ [(k, err)]
 
+
+
+
+
+
 class AcidWorldState (i :: *) where
   data AWState i (ss :: [Symbol])
   data AWConfig i (ss :: [Symbol])
@@ -173,9 +178,15 @@ askSegmentsState :: forall i ss. (ValidAcidWorldState i ss) => AWQuery i ss (Seg
 askSegmentsState = fmap npToSegmentsState askStateNp
 
 
+-- this structure allows the inner monad code to run something wrapped up in the backend monad
+data LoadEventsConduit m ss nn where
+  LoadEventsConduit :: forall m ss nn. (forall a. ConduitT (Either Text (WrappedEvent ss nn)) Void (ResourceT IO) a -> m a) -> LoadEventsConduit m ss nn
+
+runLoadEventsConduit :: LoadEventsConduit m ss nn -> ConduitT (Either Text (WrappedEvent ss nn)) Void (ResourceT IO) a -> m a
+runLoadEventsConduit (LoadEventsConduit f) = f
 
 data BackendHandles m ss nn = BackendHandles {
-    bhLoadEvents :: MonadIO m => m (ConduitT () (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()),
+    bhLoadEvents :: MonadIO m => LoadEventsConduit m ss nn,
     bhGetInitialState :: MonadIO m => m ((Either AWException (SegmentsState ss)))
   }
 

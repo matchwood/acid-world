@@ -11,7 +11,6 @@ import Acid.Core.Segment
 import Acid.Core.State
 import Acid.Core.Serialise
 import Acid.Core.Backend
-import Conduit
 
 data AcidWorld  ss nn t where
   AcidWorld :: (
@@ -50,18 +49,20 @@ openAcidWorld :: forall m ss nn b uMonad t.
                ) => SegmentsState ss -> Invariants ss -> AWBConfig b -> AWConfig uMonad ss -> AcidSerialiseEventOptions t ->  m (Either AWException (AcidWorld ss nn t))
 openAcidWorld acidWorldDefaultState acidWorldInvariants acidWorldBackendConfig acidWorldStateConfig acidWorldSerialiserOptions = do
   eBind (initialiseBackend acidWorldBackendConfig acidWorldSerialiserOptions) $ \acidWorldBackendState -> do
-    let parsers = makeDeserialiseParsers acidWorldSerialiserOptions (Proxy :: Proxy ss) (Proxy :: Proxy nn)
-    eBind (loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState acidWorldSerialiserOptions  :: m (Either AWException (m (ConduitT i (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())))) $ \lEvents -> do
-      let handles = BackendHandles {
-              bhLoadEvents = lEvents,
-              bhGetInitialState = getInitialState acidWorldDefaultState acidWorldBackendState acidWorldSerialiserOptions
-            }
+
+    eBind (makeBackendHandles acidWorldBackendState) $ \handles -> do
+
       eAcidWorldState <- initialiseState acidWorldStateConfig handles acidWorldInvariants
       case eAcidWorldState of
         Left err -> do
           closeBackend acidWorldBackendState
           pure . Left $ err
         Right acidWorldState ->  pure . pure $ AcidWorld{..}
+  where
+    makeBackendHandles :: AWBState b -> m (Either AWException (BackendHandles m ss nn))
+    makeBackendHandles acidWorldBackendState = (fmap . fmap) (\lEvents -> BackendHandles lEvents (getInitialState acidWorldDefaultState acidWorldBackendState acidWorldSerialiserOptions)) $ (loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState acidWorldSerialiserOptions)
+
+    parsers = makeDeserialiseParsers acidWorldSerialiserOptions (Proxy :: Proxy ss) (Proxy :: Proxy nn)
 
 closeAcidWorld :: (MonadIO m) => AcidWorld ss nn t -> m ()
 closeAcidWorld (AcidWorld {..}) = do
