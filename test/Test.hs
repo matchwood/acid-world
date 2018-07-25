@@ -191,6 +191,23 @@ unit_checkpointAndRestoreState b o step = do
     (L.sort (ps1 ++ ps2) == L.sort psf2) &&
     (L.sort (as1 ++ as2) == L.sort asf2)
 
+  step "Creating checkpoint"
+  createCheckpoint aw3
+  step "Closing and reopening acid world"
+
+  closeAcidWorld aw3
+
+  aw4 <- reopenAcidWorldMiddleware (pure aw3)
+  usf3 <- query aw4 fetchUsers
+  psf3 <- query aw4 fetchPhonenumbers
+  asf3 <- query aw4 fetchAddresses
+
+  assertBool "Fetched record list did not match inserted records after second reopen" $
+    (L.sort (us1 ++ us2) == L.sort usf3) &&
+    (L.sort (ps1 ++ ps2) == L.sort psf3) &&
+    (L.sort (as1 ++ as2) == L.sort asf3)
+
+
 
 
 

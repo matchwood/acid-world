@@ -10,6 +10,8 @@ copyright:           2018 Matchwood
 category:            Database
 build-type:          Simple
 cabal-version:       >= 1.24
+data-files:
+  src/dataFiles/*.md
 
 library
   exposed-modules:
@@ -31,6 +33,7 @@ library
     Acid.Core.State.Abstract
     Acid.Core.State.PureState
   other-modules:
+    Paths_acid_world
   build-depends:
     base,
     bytestring,

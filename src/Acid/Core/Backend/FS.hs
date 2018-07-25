@@ -33,6 +33,9 @@ import Control.Arrow (left)
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray.Encoding as BA
 import qualified Data.ByteArray as BA
+import Paths_acid_world (getDataFileName)
+
+
 
 data AcidWorldBackendFS
 
@@ -166,8 +169,11 @@ instance AcidWorldBackend AcidWorldBackendFS where
 
 startOrResumeCurrentEventsLog :: (MonadIO m, AcidSerialiseEvent t) => AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Handle, Handle)
 startOrResumeCurrentEventsLog c t = do
+  readmeP <- getStateFolderReadme
+  Dir.copyFile readmeP ((aWBConfigFSStateDir c) <> "/README.md")
   let currentS = currentStateFolder c
   Dir.createDirectoryIfMissing True currentS
+  Dir.copyFile readmeP (currentS <> "/README.md")
   let eventPath = makeEventPath c t
       eventCPath = makeEventsCheckPath c t
   eHandle <- liftIO $ openBinaryFile eventPath ReadWriteMode
@@ -291,7 +297,7 @@ archiveTimeFormat :: String
 archiveTimeFormat = "%0Y-%m-%d_%H-%M-%S-%6q_UTC"
 
 archiveStateFolder :: AWBConfig AcidWorldBackendFS -> FilePath
-archiveStateFolder c = (aWBConfigFSStateDir $ c) <> "/archive"
+archiveStateFolder c = (aWBConfigFSStateDir c) <> "/archive"
 
 
 currentCheckpointFolder :: AWBConfig AcidWorldBackendFS -> FilePath
@@ -310,3 +316,6 @@ makeEventPath c t = currentStateFolder c <> "/" <> "events" <> serialiserFileExt
 
 makeEventsCheckPath :: AcidSerialiseEvent t => AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> FilePath
 makeEventsCheckPath c t = makeEventPath c t <> ".check"
+
+getStateFolderReadme :: (MonadIO m) => m FilePath
+getStateFolderReadme = liftIO $ getDataFileName "src/dataFiles/stateFolderReadMe.md"
