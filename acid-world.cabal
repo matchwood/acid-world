@@ -29,6 +29,7 @@ library
     Acid.Core.Backend.Abstract
     Acid.Core.Backend.FS
     Acid.Core.Backend.Memory
+    Acid.Core.Backend.Groundhog
     Acid.Core.State
     Acid.Core.State.Abstract
     Acid.Core.State.PureState
@@ -55,7 +56,10 @@ library
     attoparsec,
     cryptonite,
     memory,
-    crc
+    crc,
+    groundhog,
+    groundhog-postgresql,
+    resource-pool
 
 
   hs-source-dirs:      src
