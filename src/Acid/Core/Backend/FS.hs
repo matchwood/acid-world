@@ -4,7 +4,7 @@
 module Acid.Core.Backend.FS where
 import RIO
 import qualified RIO.Text as T
-import System.IO (openBinaryFile, IOMode(..))
+import System.IO (openBinaryFile, IOMode(..), SeekMode(..))
 import qualified RIO.Directory as Dir
 import qualified RIO.ByteString as BS
 import qualified RIO.ByteString.Lazy as BL
@@ -58,7 +58,7 @@ modifyTMVar m io = do
 instance AcidWorldBackend AcidWorldBackendFS where
   data AWBState AcidWorldBackendFS = AWBStateFS {
     aWBStateFSConfig :: AWBConfig AcidWorldBackendFS,
-    aWBStateFSEventsHandle :: TMVar.TMVar Handle
+    aWBStateFSEventsHandle :: TMVar.TMVar (Handle, Handle)
   }
   data AWBConfig AcidWorldBackendFS = AWBConfigFS {
     aWBConfigFSStateDir :: FilePath,
@@ -71,16 +71,18 @@ instance AcidWorldBackend AcidWorldBackendFS where
     stateP <- Dir.makeAbsolute (aWBConfigFSStateDir c)
     let finalConf = c{aWBConfigFSStateDir = stateP}
     -- create an archive directory for later
-    hdl <- startOrResumeCurrentEventsLog finalConf t
-    hdlV <- liftIO $ STM.atomically $ newTMVar hdl
+    hdls <- startOrResumeCurrentEventsLog finalConf t
+
+    hdlV <- liftIO $ STM.atomically $ newTMVar hdls
     pure . pure $ AWBStateFS finalConf hdlV
   createCheckpointBackend s awu t = do
 
     let currentS = currentStateFolder (aWBStateFSConfig s)
         previousS = previousStateFolder (aWBStateFSConfig s)
     -- close the current events log and return current state - as soon as this completes updates can start runnning again
-    sToWrite <- modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
-      liftIO $ hClose hdl
+    sToWrite <- modifyTMVar (aWBStateFSEventsHandle s) $ \(eHdl, cHdl) -> do
+      liftIO $ hClose eHdl
+      liftIO $ hClose cHdl
       -- move the current state directory
       Dir.renameDirectory currentS previousS
       -- state a new log in a new current folder
@@ -104,23 +106,24 @@ instance AcidWorldBackend AcidWorldBackendFS where
         fmap (left AWExceptionSegmentDeserialisationError) $ readLastCheckpointState middleware defState s t cpFolder
       else pure . pure $ defState
 
-  closeBackend s = modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
-    liftIO $ hClose hdl
+  closeBackend s = modifyTMVar (aWBStateFSEventsHandle s) $ \(eHdl, cHdl) -> do
+    liftIO $ hClose eHdl
+    liftIO $ hClose cHdl
     pure (error "AcidWorldBackendFS has been closed", ())
-  loadEvents :: (MonadIO m, AcidSerialiseEvent t) => (ConduitT (AWBSerialiseConduitT AcidWorldBackendFS) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->  AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Either AWException (LoadEventsConduit m ss nn))
-  loadEvents deserialiseConduit s t =  do
-    let cPath = makeEventsCheckPath (aWBStateFSConfig s) t
-    exists <- Dir.doesFileExist cPath
 
-    expectedLastEventId <-
-      if exists
-        then fmap ((fmap Just  . eventIdFromText) . decodeUtf8Lenient) $ BS.readFile (makeEventsCheckPath (aWBStateFSConfig s) t)
-        else pure . Right $ Nothing
+  loadEvents deserialiseConduit s _ =  do
+    expectedLastEventId <- liftIO $ withTMVar (aWBStateFSEventsHandle s) $ \(_, cHdl) -> do
+      liftIO $ hSeek cHdl AbsoluteSeek 0
+      empty <- hIsEOF cHdl
+      if empty
+        then pure . Right $ Nothing
+        else fmap ((fmap Just  . eventIdFromText) . decodeUtf8Lenient) $ BS.hGetLine cHdl
+
     case expectedLastEventId of
       Left err -> pure . Left $ AWExceptionEventSerialisationError err
       Right lastEventId -> pure . Right  $ LoadEventsConduit $ \restConduit -> liftIO $
-        withTMVar (aWBStateFSEventsHandle s) $ \hdl -> runConduitRes $
-          sourceHandle hdl .|
+        withTMVar (aWBStateFSEventsHandle s) $ \(eHdl, _) -> runConduitRes $
+          sourceHandle eHdl .|
           deserialiseConduit .|
           checkLastEventIdConduit lastEventId .|
           restConduit
@@ -141,7 +144,7 @@ instance AcidWorldBackend AcidWorldBackendFS where
               then yield $ Right we
               else yield (Left $ "Events log check failed - expected final event with id " <> showT eId <> " but got " <> showT (wrappedEventId we))
   -- @todo this should be bracketed including bracketing the io action. Also the IO action should perhaps be restricted (if it loops to this then there will be trouble!). The internal state also needs to be rolled back if any part of this fails
-  handleUpdateEventC serializer s awu t ec act = withTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
+  handleUpdateEventC serializer s awu _ ec act = withTMVar (aWBStateFSEventsHandle s) $ \(eHdl, cHdl) -> do
     eBind (runUpdateC awu ec) $ \(es, r, onSuccess, onFail) -> do
         stEs <- mkStorableEvents es
 
@@ -150,22 +153,25 @@ instance AcidWorldBackend AcidWorldBackendFS where
           Just lastEventId -> do
             ioR <- act r
 
-            BL.hPut hdl $ serializer stEs
-            hFlush hdl
-
-            BS.writeFile (makeEventsCheckPath (aWBStateFSConfig s) t) (encodeUtf8 $ eventIdToText lastEventId)
+            BL.hPut eHdl $ serializer stEs
+            hFlush eHdl
+            liftIO $ hSeek cHdl AbsoluteSeek 0
+            BS.hPut cHdl (encodeUtf8 $ eventIdToText lastEventId)
+            hFlush cHdl
             -- at this point the event has been definitively written
             onSuccess
             pure . Right $ (r, ioR)
 
 
-startOrResumeCurrentEventsLog :: (MonadIO m, AcidSerialiseEvent t) => AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m Handle
+startOrResumeCurrentEventsLog :: (MonadIO m, AcidSerialiseEvent t) => AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Handle, Handle)
 startOrResumeCurrentEventsLog c t = do
   let currentS = currentStateFolder c
   Dir.createDirectoryIfMissing True currentS
   let eventPath = makeEventPath c t
-  liftIO $ openBinaryFile eventPath ReadWriteMode
-
+      eventCPath = makeEventsCheckPath c t
+  eHandle <- liftIO $ openBinaryFile eventPath ReadWriteMode
+  cHandle <- liftIO $ openBinaryFile eventCPath ReadWriteMode
+  pure (eHandle, cHandle)
 
 
 writeCheckpoint :: forall t sFields m. (AcidSerialiseEvent t, AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, MonadThrow m, PrimMonad m, All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()

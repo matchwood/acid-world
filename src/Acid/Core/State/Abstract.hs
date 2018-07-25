@@ -262,7 +262,7 @@ eventIdToText = UUID.toText . uuidFromEventId
 eventIdFromText :: Text -> Either Text EventId
 eventIdFromText bs =
   case UUID.fromText bs of
-    Nothing -> Left "Could not parse event id from Text"
+    Nothing -> Left $ "Could not parse event id from Text: " <> bs
     Just u -> pure . EventId $ u
 
 data Event (n :: k) where
