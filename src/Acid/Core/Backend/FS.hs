@@ -8,6 +8,8 @@ import System.IO (openBinaryFile, IOMode(..))
 import qualified RIO.Directory as Dir
 import qualified RIO.ByteString as BS
 import qualified RIO.ByteString.Lazy as BL
+import qualified RIO.Time as Time
+
 import qualified Control.Concurrent.STM.TMVar as  TMVar
 import qualified Control.Concurrent.STM  as STM
 
@@ -68,29 +70,30 @@ instance AcidWorldBackend AcidWorldBackendFS where
   initialiseBackend c t = do
     stateP <- Dir.makeAbsolute (aWBConfigFSStateDir c)
     let finalConf = c{aWBConfigFSStateDir = stateP}
-    let currentS = currentStateFolder finalConf
-    Dir.createDirectoryIfMissing True currentS
-    let eventPath = makeEventPath finalConf t
-    hdl <- liftIO $ openBinaryFile eventPath ReadWriteMode
+    -- create an archive directory for later
+    hdl <- startOrResumeCurrentEventsLog finalConf t
     hdlV <- liftIO $ STM.atomically $ newTMVar hdl
     pure . pure $ AWBStateFS finalConf hdlV
   createCheckpointBackend s awu t = do
-    -- cut the current events log - as soon as this completes updates can start runnning again
+
+    let currentS = currentStateFolder (aWBStateFSConfig s)
+        previousS = previousStateFolder (aWBStateFSConfig s)
+    -- close the current events log and return current state - as soon as this completes updates can start runnning again
     sToWrite <- modifyTMVar (aWBStateFSEventsHandle s) $ \hdl -> do
-      let eventPath = makeEventPath (aWBStateFSConfig s) t
-          oldEventFile = eventPath <> ".1"
-          eventCheckPath = makeEventsCheckPath (aWBStateFSConfig s) t
-          oldEventFileCheckPath = eventCheckPath <> ".1"
       liftIO $ hClose hdl
-      -- @todo this should be atomic
-      Dir.renameFile eventPath oldEventFile
-      Dir.renameFile eventCheckPath oldEventFileCheckPath
-      hdl' <- liftIO $ openBinaryFile eventPath ReadWriteMode
+      -- move the current state directory
+      Dir.renameDirectory currentS previousS
+      -- state a new log in a new current folder
+      hdl' <- startOrResumeCurrentEventsLog (aWBStateFSConfig s) t
       st <- runQuery awu askStateNp
       pure (hdl', st)
     writeCheckpoint s t sToWrite
-
-
+    -- at this point the current state directory contains everything needed, so we can archive the previous state
+    now <- Time.getCurrentTime
+    let archiveS = archiveStateFolder (aWBStateFSConfig s)
+    Dir.createDirectoryIfMissing True archiveS
+    let newArchivePath = archiveS <> "/" <> Time.formatTime Time.defaultTimeLocale archiveTimeFormat now
+    Dir.renameDirectory previousS newArchivePath
 
   getInitialState defState s t = do
     let cpFolder = currentCheckpointFolder (aWBStateFSConfig $ s)
@@ -149,10 +152,19 @@ instance AcidWorldBackend AcidWorldBackendFS where
 
             BL.hPut hdl $ serializer stEs
             hFlush hdl
-            BS.writeFile (makeEventsCheckPath (aWBStateFSConfig s) t) (encodeUtf8 $ eventIdToText lastEventId)
 
+            BS.writeFile (makeEventsCheckPath (aWBStateFSConfig s) t) (encodeUtf8 $ eventIdToText lastEventId)
+            -- at this point the event has been definitively written
             onSuccess
             pure . Right $ (r, ioR)
+
+
+startOrResumeCurrentEventsLog :: (MonadIO m, AcidSerialiseEvent t) => AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m Handle
+startOrResumeCurrentEventsLog c t = do
+  let currentS = currentStateFolder c
+  Dir.createDirectoryIfMissing True currentS
+  let eventPath = makeEventPath c t
+  liftIO $ openBinaryFile eventPath ReadWriteMode
 
 
 
@@ -263,6 +275,17 @@ readSha256FromFile fp = do
 
 currentStateFolder :: AWBConfig AcidWorldBackendFS -> FilePath
 currentStateFolder c = (aWBConfigFSStateDir $ c) <> "/current"
+
+previousStateFolder :: AWBConfig AcidWorldBackendFS -> FilePath
+previousStateFolder c = (aWBConfigFSStateDir $ c) <> "/previous"
+
+
+archiveTimeFormat :: String
+archiveTimeFormat = "%0Y-%m-%d_%H-%M-%S-%6q_UTC"
+
+archiveStateFolder :: AWBConfig AcidWorldBackendFS -> FilePath
+archiveStateFolder c = (aWBConfigFSStateDir $ c) <> "/archive"
+
 
 currentCheckpointFolder :: AWBConfig AcidWorldBackendFS -> FilePath
 currentCheckpointFolder c = currentStateFolder c <> "/checkpoint"
