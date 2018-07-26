@@ -16,11 +16,14 @@ import Database.PostgreSQL.Simple
 import Database.PostgreSQL.Simple.ToField
 import Database.PostgreSQL.Simple.FromField
 import Database.PostgreSQL.Simple.ToRow
+import Database.PostgreSQL.Simple.Ok
 import Data.Aeson(ToJSON(..), FromJSON(..))
-import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as Aeson
-import Acid.Core.Serialise.JSON()
+import System.IO.Unsafe (unsafePerformIO)
 
+import Conduit
+
+import Acid.Core.Serialise.JSON()
 import Acid.Core.State
 import Acid.Core.Utils
 import Acid.Core.Serialise.Abstract
@@ -33,8 +36,6 @@ type PostgresConduitT = [(Field, Maybe ByteString)]
 instance ToRow PostgresRow where
   toRow (PostgresRow a) = toRow a
 
-class ToPostgres a where
-  createTable :: Proxy a -> Query
 
 storableEventCreateTable :: Query
 storableEventCreateTable = "CREATE TABLE storableevent (id SERIAL PRIMARY KEY, eventName Text NOT NULL, eventDate timestamptz NOT NULL, eventId uuid NOT NULL, eventArgs json NOT NULL);"
@@ -53,11 +54,52 @@ instance AcidSerialiseEvent AcidSerialiserPostgresql where
   serialiseStorableEvent _ n = [PostgresRow n]
   deserialiseStorableEvent = error "deserialiseStorableEvent"
   makeDeserialiseParsers _ _ _ = makePostgresParsers
-  deserialiseEventStream = error "deserialiseEventStream"
+  deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserPostgresql -> AcidSerialiseParsers AcidSerialiserPostgresql ss nn -> (ConduitT PostgresConduitT (Either Text (WrappedEvent ss nn)) (m) ())
+  deserialiseEventStream _ ps = awaitForever loop
+    where
+      loop :: PostgresConduitT -> ConduitT PostgresConduitT (Either Text (WrappedEvent ss nn)) m ()
+      loop fs = do
+        en <- runConversionToEither (fromIdx fs 1)
+        case en of
+          Left err -> yield (Left err) >> awaitForever loop
+          Right n ->
+            case HM.lookup n ps of
+              Nothing -> yield (Left $ "Could not find parser for event named " <> n) >> (awaitForever loop)
+              Just p -> do
+                we <- runConversionToEither (p fs)
+                yield we >> (awaitForever loop)
 
 
 class (ValidEventName ss n, All FromJSON (EventArgs n), All ToJSON (EventArgs n)) => CanSerialisePostgresql ss n
 instance (ValidEventName ss n, All FromJSON (EventArgs n), All ToJSON (EventArgs n)) => CanSerialisePostgresql ss n
+
+instance AcidSerialiseC AcidSerialiserPostgresql where
+  type AcidSerialiseConstraintP AcidSerialiserPostgresql ss = CanSerialisePostgresql ss
+
+instance (AcidSerialisePostgres a) => AcidSerialiseSegment AcidSerialiserPostgresql a where
+  type AcidSerialiseSegmentT AcidSerialiserPostgresql = (String, PostgresRow)
+  serialiseSegment _ seg = yieldMany $  map (\r -> (tableName (Proxy :: Proxy a), r)) (toPostgresRows seg)
+
+  deserialiseSegment = error "deserialiseSegment"
+
+class AcidSerialisePostgres a where
+  toPostgresRows :: a -> [PostgresRow]
+  tableName :: Proxy a -> String
+  createTable :: Proxy a -> Query
+
+
+runConversionToEither :: (Monad m) => Conversion a -> m (Either Text a)
+runConversionToEither c = do
+  -- horrific but this is just a poc
+  eC <- pure $ unsafePerformIO $ (runConversion c) (error "Attempt to access db connection in runConversionToEither")
+  case eC of
+    Errors es -> pure . Left . showT $ es
+    Ok a -> pure . Right $ a
+
+
+instance FromField (Field, Maybe ByteString) where
+  fromField f bs = pure (f, bs)
+
 
 
 
@@ -93,15 +135,6 @@ instance (CanSerialisePostgresql ss n, EventArgs n ~ xs) => FromFields (Storable
     case Aeson.parseEither parseJSON jsonV of
       Left err -> conversionError $ AWExceptionEventDeserialisationError (T.pack err)
       Right args -> return $ StorableEvent t (EventId uid) ((Event args) :: Event n)
-
-
-instance AcidSerialiseC AcidSerialiserPostgresql where
-  type AcidSerialiseConstraintP AcidSerialiserPostgresql ss = CanSerialisePostgresql ss
-
-instance AcidSerialiseSegment AcidSerialiserPostgresql seg where
-  serialiseSegment = error "serialiseSegment"
-
-  deserialiseSegment = error "deserialiseSegment"
 
 
 {-  deserialiseStorableEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> (Either Text (StorableEvent ss nn n))

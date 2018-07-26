@@ -181,7 +181,7 @@ startOrResumeCurrentEventsLog c t = do
   pure (eHandle, cHandle)
 
 
-writeCheckpoint :: forall t sFields m. (AcidSerialiseEvent t, AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, MonadThrow m, PrimMonad m, All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()
+writeCheckpoint :: forall t sFields m. (AcidSerialiseEvent t, AcidSerialiseSegmentT t ~ BS.ByteString, MonadUnliftIO m, MonadThrow m, PrimMonad m, All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()
 writeCheckpoint s t np = do
   let cpFolderFinal = currentCheckpointFolder (aWBStateFSConfig $ s)
       cpFolderTemp = cpFolderFinal <> ".temp"
@@ -193,7 +193,7 @@ writeCheckpoint s t np = do
 
   Dir.renameDirectory cpFolderTemp cpFolderFinal
 
-writeSegment :: forall t m fs. (AcidSerialiseEvent t, AcidSerialiseConduitT t ~ BS.ByteString, MonadUnliftIO m, MonadThrow m, AcidSerialiseSegmentFieldConstraint t fs) => ConduitT ByteString ByteString (ResourceT m) () -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> FilePath -> V.ElField fs -> m ()
+writeSegment :: forall t m fs. (AcidSerialiseEvent t, AcidSerialiseSegmentT t ~ BS.ByteString, MonadUnliftIO m, MonadThrow m, AcidSerialiseSegmentFieldConstraint t fs) => ConduitT ByteString ByteString (ResourceT m) () -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> FilePath -> V.ElField fs -> m ()
 writeSegment middleware s t dir (V.Field seg) = do
 
   let pp = (Proxy :: Proxy (V.Fst fs))
@@ -216,7 +216,7 @@ writeSegment middleware s t dir (V.Field seg) = do
 
 
 
-readLastCheckpointState :: forall ss m t. (AcidSerialiseEvent t, ValidSegmentsSerialise t ss,  MonadUnliftIO m, AcidSerialiseConduitT t ~ BS.ByteString) =>  ConduitT ByteString ByteString (ResourceT m) () -> SegmentsState ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> FilePath ->  m (Either Text (SegmentsState ss))
+readLastCheckpointState :: forall ss m t. (AcidSerialiseEvent t, ValidSegmentsSerialise t ss,  MonadUnliftIO m, AcidDeserialiseSegmentT t ~ BS.ByteString) =>  ConduitT ByteString ByteString (ResourceT m) () -> SegmentsState ss -> AWBState AcidWorldBackendFS -> AcidSerialiseEventOptions t -> FilePath ->  m (Either Text (SegmentsState ss))
 readLastCheckpointState middleware defState s t dir = (fmap . fmap) (npToSegmentsState) segsNpE
 
   where

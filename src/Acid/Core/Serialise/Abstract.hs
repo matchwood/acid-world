@@ -72,9 +72,13 @@ serialiseEventNP _ Nil = mempty
 serialiseEventNP t ((:*) se restNp) = serialiseEventNP t restNp <> serialiseStorableEvent t se
 
 class AcidSerialiseSegment (t :: k) seg where
-  serialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> seg -> ConduitT i (AcidSerialiseConduitT t) m ()
+  type AcidSerialiseSegmentT t :: *
+  type AcidSerialiseSegmentT t = AcidSerialiseConduitT t
+  type AcidDeserialiseSegmentT t :: *
+  type AcidDeserialiseSegmentT t = AcidSerialiseConduitT t
+  serialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> seg -> ConduitT i (AcidSerialiseSegmentT t) m ()
   -- we have to provide a solution here that allows proper incremental parsing, and the only way to do that with CBOR is to run the conduit with STT. It shouldn't make any difference to other serialisers.
-  deserialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> ConduitT (AcidSerialiseConduitT t) o (STT s m) (Either Text seg)
+  deserialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> ConduitT (AcidDeserialiseSegmentT t) o (STT s m) (Either Text seg)
 
 
 

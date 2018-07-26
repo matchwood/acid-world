@@ -19,6 +19,8 @@ data AcidWorld  ss nn t where
                , AcidSerialiseEvent t
                , AcidSerialiseT t ~ AWBSerialiseT b
                , AcidSerialiseConduitT t ~ AWBSerialiseConduitT b
+               , AcidSerialiseSegmentT t ~ AWBSerialiseSegmentT b
+               , AcidDeserialiseSegmentT t ~ AWBDeserialiseSegmentT b
                , AcidSerialiseConstraintAll t ss nn
                , ValidEventNames ss nn
                , ValidSegmentsSerialise t ss
@@ -43,6 +45,8 @@ openAcidWorld :: forall m ss nn b uMonad t.
                , AcidSerialiseEvent t
                , AcidSerialiseT t ~ AWBSerialiseT b
                , AcidSerialiseConduitT t ~ AWBSerialiseConduitT b
+               , AcidSerialiseSegmentT t ~ AWBSerialiseSegmentT b
+               , AcidDeserialiseSegmentT t ~ AWBDeserialiseSegmentT b
                , AcidSerialiseConstraintAll t ss nn
                , ValidEventNames ss nn
                , ValidSegmentsSerialise t ss

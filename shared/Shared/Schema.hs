@@ -19,6 +19,7 @@ import Acid.World
 import Codec.Serialise
 import Data.SafeCopy
 
+import qualified Database.PostgreSQL.Simple.ToRow as PSQL
 
 instance (Serialise b, IxSet.Indexable a b) => Serialise (IxSet.IxSet a b) where
   encode = encode . IxSet.toList
@@ -39,6 +40,11 @@ data User = User  {
   userDisabled :: !Bool
 } deriving (Eq, Show, Generic, Ord)
 
+instance PSQL.ToRow User
+instance AcidSerialisePostgres (IxSet.IxSet a User) where
+  toPostgresRows a = map PostgresRow (IxSet.toList a)
+  tableName _ = "app_user"
+  createTable _ = "CREATE TABLE app_user (userId integer NOT NULL, userFirstName Text NOT NULL, userLastName Text NOT NULL,  userCreated timestamptz, userDisabled bool);"
 instance Serialise User
 
 type UserIxs = '[Int, Maybe Time.UTCTime, Bool]
@@ -105,6 +111,11 @@ data Address = Address  {
   addressCountry :: !Text
 } deriving (Eq, Show, Generic, Ord)
 
+instance PSQL.ToRow Address
+instance AcidSerialisePostgres (IxSet.IxSet a Address) where
+  toPostgresRows a = map PostgresRow (IxSet.toList a)
+  tableName _ = "app_address"
+
 instance Serialise Address
 
 type AddressIxs = '[Int, Text]
@@ -158,6 +169,11 @@ data Phonenumber = Phonenumber  {
   phonenumberCallingCode :: !Int,
   phonenumberIsCell :: !Bool
 } deriving (Eq, Show, Generic, Ord)
+
+instance PSQL.ToRow Phonenumber
+instance AcidSerialisePostgres (IxSet.IxSet a Phonenumber) where
+  toPostgresRows a = map PostgresRow (IxSet.toList a)
+  tableName _ = "app_phonenumber"
 
 instance Serialise Phonenumber
 

@@ -364,6 +364,15 @@ unit_insertAndRestoreStatePostgres step = do
   mapM_ (runInsertUser aw) us
   usf <- query aw fetchUsers
   assertBool "Fetched user list did not match inserted user list" (L.sort us == L.sort usf)
+  step "Closing and reopening"
+  closeAcidWorld aw
+  aw2 <- throwEither $ reopenAcidWorld aw
+  usf1 <- query aw2 fetchUsers
+  step "Fetching new user list"
+  assertBool "Fetched user list did not match inserted user list after restore" (L.sort us == L.sort usf1)
+  createCheckpoint aw2
+
+
 
 
 assertErrorPrefix :: AWException -> Either AWException a -> Assertion

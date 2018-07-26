@@ -31,6 +31,8 @@ type AppValidSerialiserConstraint s = (
   AcidSerialiseConstraintAll s AppSegments AppEvents,
   AcidSerialiseT s ~ BL.ByteString,
   AcidSerialiseConduitT s ~ BS.ByteString,
+  AcidSerialiseSegmentT s ~ BS.ByteString,
+  AcidDeserialiseSegmentT s ~ BS.ByteString,
   AcidSerialiseConstraint s AppSegments "insertUser",
   AcidSerialiseConstraint s AppSegments "insertAddress",
   AcidSerialiseConstraint s AppSegments "insertPhonenumber",
@@ -40,7 +42,9 @@ type AppValidSerialiserConstraint s = (
 type AppValidBackendConstraint b = (
   AcidWorldBackend b,
   AWBSerialiseT b ~ BL.ByteString,
-  AWBSerialiseConduitT b ~ BS.ByteString
+  AWBSerialiseConduitT b ~ BS.ByteString,
+  AWBSerialiseSegmentT b ~ BS.ByteString,
+  AWBDeserialiseSegmentT b ~ BS.ByteString
 
   )
 
@@ -109,8 +113,20 @@ mkTempDir = do
 
 
 
+type ValidAppAcidSerialise s b = (
+      AcidSerialiseT s ~ AWBSerialiseT b
+    , AcidSerialiseConduitT s ~ AWBSerialiseConduitT b
+    , AcidSerialiseSegmentT s ~ AWBSerialiseSegmentT b
+    , AcidDeserialiseSegmentT s ~ AWBDeserialiseSegmentT b
+    )
 
-openAppAcidWorldRestoreState :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseConduitT s ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
+type ValidAppAcidSerialiseBS s b = (
+    ValidAppAcidSerialise s b
+  , AWBSerialiseT b ~ BL.ByteString
+
+
+  )
+openAppAcidWorldRestoreState :: (ValidAppAcidSerialise s AcidWorldBackendFS, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
 openAppAcidWorldRestoreState opts s = do
   t <- mkTempDir
   let e = topLevelStoredStateDir <> "/" <> "testState" <> "/" <> s
@@ -121,17 +137,17 @@ openAppAcidWorldRestoreState opts s = do
   putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
   pure aw
 
-openAppAcidWorldFresh :: (AcidSerialiseT s ~ BL.ByteString, AWBSerialiseT b ~ BL.ByteString, AcidSerialiseConduitT s ~ BS.ByteString, AWBSerialiseConduitT b ~ BS.ByteString, AcidWorldBackend b,  AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => (FilePath -> AWBConfig b) -> (AcidSerialiseEventOptions s) -> IO (AppAW s)
+openAppAcidWorldFresh :: (ValidAppAcidSerialise s b, AcidWorldBackend b,  AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => (FilePath -> AWBConfig b) -> (AcidSerialiseEventOptions s) -> IO (AppAW s)
 openAppAcidWorldFresh bConf opts = openAppAcidWorldFreshWithInvariants bConf opts emptyInvariants
 
-openAppAcidWorldFreshWithInvariants :: (AcidSerialiseT s ~ BL.ByteString, AWBSerialiseT b ~ BL.ByteString, AcidSerialiseConduitT s ~ BS.ByteString, AWBSerialiseConduitT b ~ BS.ByteString, AcidWorldBackend b,  AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => (FilePath -> AWBConfig b) -> (AcidSerialiseEventOptions s) -> Invariants AppSegments -> IO (AppAW s)
+openAppAcidWorldFreshWithInvariants :: (ValidAppAcidSerialise s b, AcidWorldBackend b,  AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => (FilePath -> AWBConfig b) -> (AcidSerialiseEventOptions s) -> Invariants AppSegments -> IO (AppAW s)
 openAppAcidWorldFreshWithInvariants bConf opts invars = do
   td <- mkTempDir
   throwEither $ openAcidWorld defaultSegmentsState invars (bConf td) AWConfigPureState opts
 
 
 type UseGzip = Bool
-openAppAcidWorldFreshFS :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseConduitT s ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => (AcidSerialiseEventOptions s) -> UseGzip -> IO (AppAW s)
+openAppAcidWorldFreshFS :: (ValidAppAcidSerialise s AcidWorldBackendFS, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => (AcidSerialiseEventOptions s) -> UseGzip -> IO (AppAW s)
 openAppAcidWorldFreshFS opts useGzip = do
   openAppAcidWorldFresh (\td -> AWBConfigFS td useGzip) opts
 
@@ -156,6 +172,9 @@ openAcidWorldPostgresWithInvariants testNameOrig invars = do
   let conf = setupConf {PSQL.connectDatabase = testDbName}
   conn2 <- PSQL.connect conf
   _ <- PSQL.execute_ conn2 storableEventCreateTable
+  _ <- PSQL.execute_ conn2 $ createTable (Proxy :: Proxy UserIxSet)
+  --_ <- PSQL.execute_ conn2 $ createTable (Proxy :: Proxy AddressIxSet)
+  --_ <- PSQL.execute_ conn2 $ createTable (Proxy :: Proxy PhonenumberIxSet)
 
   PSQL.close conn2
 
