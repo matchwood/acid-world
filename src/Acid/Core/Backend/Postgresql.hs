@@ -41,7 +41,7 @@ instance AcidWorldBackend AcidWorldBackendPostgresql where
       failIO <- toIO onFail
 
       liftIO $ withTransaction  (awbStatePostgresqlConnection s) $ do
-        res <- executeMany (awbStatePostgresqlConnection s) "insert into storableEvent VALUES (?,?,?,?)" rows
+        res <- executeMany (awbStatePostgresqlConnection s) "insert into storableEvent VALUES (DEFAULT,?,?,?,?)" rows
 
         if (fromIntegral res) /= length rows
           then do

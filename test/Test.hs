@@ -357,7 +357,7 @@ unit_insertAndRestoreStatePostgres :: (String -> IO ()) -> Assertion
 unit_insertAndRestoreStatePostgres step = do
 
   step "Opening acid world"
-  aw <- openAcidWorldPostgresWithInvariants emptyInvariants
+  aw <- openAcidWorldPostgresWithInvariants "unit_insertAndRestoreStatePostgres" emptyInvariants
   us <- QC.generate $ generateUsers 1000
 
   step "Inserting records"

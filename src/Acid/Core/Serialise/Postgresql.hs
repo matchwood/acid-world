@@ -25,7 +25,7 @@ class ToPostgres a where
   createTable :: Proxy a -> Query
 
 storableEventCreateTable :: Query
-storableEventCreateTable = "CREATE TABLE storableEvent (eventName Text NOT NULL, eventDate timestamptz NOT NULL, eventId uuid NOT NULL, eventArgs json NOT NULL);"
+storableEventCreateTable = "CREATE TABLE storableevent (id SERIAL PRIMARY KEY, eventName Text NOT NULL, eventDate timestamptz NOT NULL, eventId uuid NOT NULL, eventArgs json NOT NULL);"
 
 data AcidSerialiserPostgresql
 
