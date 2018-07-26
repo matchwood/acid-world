@@ -48,8 +48,8 @@ tests = testGroup "Tests" $
   withBackends ephemeralBackendSerialiserTests (backendsWithAllSerialisers allBackends) ++
   withBackends persistentBackendSerialiserTests (backendsWithAllSerialisers persistentBackendsWithGzip) ++
   withBackends persistentBackendConstraintTests (backendsWithSerialisers persistentBackends [defaultAppSerialiser]) ++
-
-  fsSpecificTests (\t -> AWBConfigFS t True) defaultAppSerialiser
+  fsSpecificTests (\t -> AWBConfigFS t True) defaultAppSerialiser ++
+  [postgresSpecificTests]
 
 
 
@@ -86,6 +86,13 @@ fsSpecificTests bConf (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = 
     testCaseSteps "defaultSegmentUsedOnRestore" $ unit_defaultSegmentUsedOnRestore bConf o
 
   ]
+
+postgresSpecificTests :: TestTree
+postgresSpecificTests =
+  testGroup ("Backend: Postgresql") [
+    testCaseSteps "insertAndRestoreState" $ unit_insertAndRestoreStatePostgres
+  ]
+
 genStorableEvent :: QC.Gen (StorableEvent AppSegments AppEvents "insertUser")
 genStorableEvent = do
   t <- QC.arbitrary
@@ -344,6 +351,19 @@ unit_defaultSegmentUsedOnRestore b o step = do
     unitDefaultState :: [Phonenumber] -> SegmentsState AppSegments
     unitDefaultState ps =
       putSegmentP (Proxy :: Proxy "Phonenumbers") (IxSet.fromList ps) defaultSegmentsState
+
+
+unit_insertAndRestoreStatePostgres :: (String -> IO ()) -> Assertion
+unit_insertAndRestoreStatePostgres step = do
+
+  step "Opening acid world"
+  aw <- openAcidWorldPostgresWithInvariants emptyInvariants
+  us <- QC.generate $ generateUsers 1000
+
+  step "Inserting records"
+  mapM_ (runInsertUser aw) us
+  usf <- query aw fetchUsers
+  assertBool "Fetched user list did not match inserted user list" (L.sort us == L.sort usf)
 
 
 assertErrorPrefix :: AWException -> Either AWException a -> Assertion

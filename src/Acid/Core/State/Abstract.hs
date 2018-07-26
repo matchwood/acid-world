@@ -256,6 +256,7 @@ instance (All Eq xs) => Eq (EventArgsContainer xs) where
 newtype EventId = EventId{uuidFromEventId :: UUID.UUID} deriving(Show, Eq, ToJSON, FromJSON)
 
 
+
 eventIdToText :: EventId -> Text
 eventIdToText = UUID.toText . uuidFromEventId
 

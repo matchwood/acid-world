@@ -25,11 +25,12 @@ library
     Acid.Core.Serialise.JSON.Partial
     Acid.Core.Serialise.CBOR
     Acid.Core.Serialise.SafeCopy
+    Acid.Core.Serialise.Postgresql
     Acid.Core.Backend
     Acid.Core.Backend.Abstract
     Acid.Core.Backend.FS
     Acid.Core.Backend.Memory
-    Acid.Core.Backend.Groundhog
+    Acid.Core.Backend.Postgresql
     Acid.Core.State
     Acid.Core.State.Abstract
     Acid.Core.State.PureState
@@ -57,9 +58,7 @@ library
     cryptonite,
     memory,
     crc,
-    groundhog,
-    groundhog-postgresql,
-    resource-pool
+    postgresql-simple
 
 
   hs-source-dirs:      src
@@ -148,6 +147,9 @@ test-suite acid-world-test
                      , tasty-hunit
                      , safecopy
                      , bytestring
+                     , postgresql-simple
+                     , uuid
+                     , postgresql-libpq
 
   default-language:    Haskell2010
   default-extensions:  AutoDeriveTypeable
@@ -226,6 +228,11 @@ benchmark acid-world-benchmark
                      , filepath
                      , serialise
                      , safecopy
+                     , bytestring
+                     , postgresql-simple
+                     , uuid
+                     , postgresql-libpq
+
 
   default-language:    Haskell2010
   default-extensions:  AutoDeriveTypeable

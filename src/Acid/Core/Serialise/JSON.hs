@@ -23,9 +23,6 @@ import Acid.Core.Serialise.Abstract
 import Acid.Core.Serialise.JSON.Partial
 import Conduit
 
-{-
-implementation of a json serialiser
--}
 data AcidSerialiserJSON
 
 

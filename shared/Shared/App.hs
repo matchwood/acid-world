@@ -19,7 +19,8 @@ import Test.QuickCheck as QC
 import qualified System.IO.Temp as Temp
 import qualified  System.FilePath as FilePath
 import Acid.World
-
+import qualified Database.PostgreSQL.Simple as PSQL
+import qualified Data.UUID.V4  as UUID
 import Shared.Schema
 
 (^*) :: Int -> Int -> Int
@@ -133,6 +134,34 @@ type UseGzip = Bool
 openAppAcidWorldFreshFS :: (AcidSerialiseT s ~ BL.ByteString, AcidSerialiseConduitT s ~ BS.ByteString, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => (AcidSerialiseEventOptions s) -> UseGzip -> IO (AppAW s)
 openAppAcidWorldFreshFS opts useGzip = do
   openAppAcidWorldFresh (\td -> AWBConfigFS td useGzip) opts
+
+
+openAcidWorldPostgresWithInvariants :: Invariants AppSegments -> IO (AppAW AcidSerialiserPostgresql)
+openAcidWorldPostgresWithInvariants invars = do
+  let setupConf = PSQL.defaultConnectInfo {
+              PSQL.connectUser = "acid_world_test",
+              PSQL.connectPassword = "acid_world_test",
+              PSQL.connectDatabase = "postgres"
+              }
+  conn <- PSQL.connect setupConf
+  uuid <- UUID.nextRandom
+  let testDbName = "acid_world_test" <> map (\c -> if c == '-' then '_' else c) (show uuid)
+      q = mconcat ["CREATE DATABASE ", fromString testDbName,  " WITH OWNER = acid_world_test  ENCODING = 'UTF8'  TABLESPACE = pg_default  LC_COLLATE = 'en_GB.UTF-8'  LC_CTYPE = 'en_GB.UTF-8'  CONNECTION LIMIT = -1;" ]
+
+  _ <- PSQL.execute_ conn q
+  _ <- PSQL.execute_ conn $ mconcat ["GRANT CONNECT, TEMPORARY ON DATABASE ", fromString testDbName, " TO public;"]
+  _ <- PSQL.execute_ conn $ mconcat ["GRANT ALL ON DATABASE ", fromString testDbName, "  TO acid_world_test;"]
+  PSQL.close conn
+  let conf = setupConf {PSQL.connectDatabase = testDbName}
+  conn2 <- PSQL.connect conf
+  _ <- PSQL.execute_ conn2 storableEventCreateTable
+
+  PSQL.close conn
+
+
+  throwEither $ openAcidWorld defaultSegmentsState invars (AWBConfigPostgresql conf) AWConfigPureState AcidSerialiserPostgresqlOptions
+
+
 
 closeAndReopen :: Middleware s
 closeAndReopen = reopenAcidWorldMiddleware . closeAcidWorldMiddleware
