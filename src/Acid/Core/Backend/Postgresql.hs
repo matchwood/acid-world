@@ -29,7 +29,11 @@ instance AcidWorldBackend AcidWorldBackendPostgresql where
   closeBackend s = liftIO $ close (awbStatePostgresqlConnection s)
   createCheckpointBackend _ _ _ = pure ()
   getInitialState defState _ _ = pure . pure $ defState
-  loadEvents _ _ _ = pure . pure $ LoadEventsConduit $ \rest -> liftIO $ runConduitRes $ yieldMany [] .| rest
+  loadEvents deserialiseConduit s _ = pure . pure $ LoadEventsConduit $ \restConduit -> liftIO $
+    runConduitRes $
+      sourceDatabase .|
+      deserialiseConduit .|
+      restConduit
 
 
   handleUpdateEventC serializer s awu _ ec act = do
@@ -41,7 +45,7 @@ instance AcidWorldBackend AcidWorldBackendPostgresql where
       failIO <- toIO onFail
 
       liftIO $ withTransaction  (awbStatePostgresqlConnection s) $ do
-        res <- executeMany (awbStatePostgresqlConnection s) "insert into storableEvent VALUES (DEFAULT,?,?,?,?)" rows
+        res <- executeMany (awbStatePostgresqlConnection s) "insert into storableEvent VALUES (?,?,?,?,?)" rows
 
         if (fromIntegral res) /= length rows
           then do

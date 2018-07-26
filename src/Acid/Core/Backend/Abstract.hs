@@ -38,7 +38,11 @@ class AcidWorldBackend (b :: k) where
   getInitialState :: (AcidSerialiseEvent t, MonadUnliftIO m, PrimMonad m, MonadThrow m, AcidSerialiseConduitT t ~ AWBSerialiseConduitT b, ValidSegmentsSerialise t ss ) => SegmentsState ss -> AWBState b -> AcidSerialiseEventOptions t -> m (Either AWException (SegmentsState ss))
   getInitialState defState _ _ = pure . pure $ defState
   -- return events since the last checkpoint, if any
-  loadEvents :: (MonadUnliftIO m, AcidSerialiseEvent t) => (ConduitT (AWBSerialiseConduitT b) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->  AWBState b -> AcidSerialiseEventOptions t ->  m (Either AWException (LoadEventsConduit m ss nn))
+  loadEvents :: (MonadUnliftIO m, AcidSerialiseEvent t) =>
+       (ConduitT (AWBSerialiseConduitT b) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ()) ->
+       AWBState b ->
+       AcidSerialiseEventOptions t ->
+       m (Either AWException (LoadEventsConduit m ss nn))
   loadEvents _ _ _ = pure . pure $ LoadEventsConduit $ \rest -> liftIO $ runConduitRes $ yieldMany [] .| rest
   handleUpdateEventC :: (
         AcidSerialiseEvent t
