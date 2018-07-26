@@ -173,8 +173,8 @@ openAcidWorldPostgresWithInvariants testNameOrig invars = do
   conn2 <- PSQL.connect conf
   _ <- PSQL.execute_ conn2 storableEventCreateTable
   _ <- PSQL.execute_ conn2 $ createTable (Proxy :: Proxy UserIxSet)
-  --_ <- PSQL.execute_ conn2 $ createTable (Proxy :: Proxy AddressIxSet)
-  --_ <- PSQL.execute_ conn2 $ createTable (Proxy :: Proxy PhonenumberIxSet)
+  _ <- PSQL.execute_ conn2 $ createTable (Proxy :: Proxy AddressIxSet)
+  _ <- PSQL.execute_ conn2 $ createTable (Proxy :: Proxy PhonenumberIxSet)
 
   PSQL.close conn2
 

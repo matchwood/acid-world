@@ -4,6 +4,7 @@ import Shared.App
 
 import RIO
 import qualified RIO.Text as T
+import qualified RIO.Time as Time
 import qualified RIO.List as L
 import qualified RIO.Directory as Dir
 
@@ -360,6 +361,7 @@ unit_insertAndRestoreStatePostgres step = do
   aw <- openAcidWorldPostgresWithInvariants "unit_insertAndRestoreStatePostgres" emptyInvariants
   us <- QC.generate $ generateUsers 1000
 
+
   step "Inserting records"
   mapM_ (runInsertUser aw) us
   usf <- query aw fetchUsers
@@ -370,7 +372,28 @@ unit_insertAndRestoreStatePostgres step = do
   usf1 <- query aw2 fetchUsers
   step "Fetching new user list"
   assertBool "Fetched user list did not match inserted user list after restore" (L.sort us == L.sort usf1)
+
+  step "Checkpointing and reopening"
   createCheckpoint aw2
+  closeAcidWorld aw2
+
+  aw3 <- throwEither $ reopenAcidWorld aw2
+  usf2 <- query aw3 fetchUsers
+  let upairs = zip (L.sort us) (L.sort usf2)
+  -- fix times (postgres in this implement is less precise)
+      fixPair (a, b) =
+        case (userCreated a, userCreated b) of
+          (Just at, Just bt) ->
+            if (Time.diffUTCTime at bt < 0.01 && Time.diffUTCTime at bt > -0.01)
+              then (a, b{userCreated = userCreated a})
+              else (a, b)
+          (_, _) -> (a, b)
+      upairsFixed = map fixPair upairs
+      (usFixed, usFixed2) = L.unzip upairsFixed
+  -- sequence $ map (\(a, b) -> when (a /= b) $ traceM ("Hot equal \n" <> showT a <> "\n" <> showT b)) upairsFixed
+  -- this fails when generated texts contains \NUL (see https://github.com/lpsmith/postgresql-simple/issues/223)
+      usFixedFinally = map (\u -> u{userFirstName = T.takeWhile  ((/=) '\NUL') (userFirstName u), userLastName = T.takeWhile  ((/=) '\NUL') (userLastName u)}) usFixed
+  assertBool "Fetched user list did not match inserted user list after checkpoint restore" (L.sort usFixedFinally == L.sort usFixed2)
 
 
 

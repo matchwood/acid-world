@@ -41,10 +41,23 @@ data User = User  {
 } deriving (Eq, Show, Generic, Ord)
 
 instance PSQL.ToRow User
-instance AcidSerialisePostgres (IxSet.IxSet a User) where
+instance (IxSet.Indexable a User) => AcidSerialisePostgres (IxSet.IxSet a User) where
   toPostgresRows a = map PostgresRow (IxSet.toList a)
-  tableName _ = "app_user"
-  createTable _ = "CREATE TABLE app_user (userId integer NOT NULL, userFirstName Text NOT NULL, userLastName Text NOT NULL,  userCreated timestamptz, userDisabled bool);"
+  createTable _ = mconcat ["CREATE TABLE ", fromString (tableName (Proxy :: Proxy "Users")) ," (userId integer NOT NULL, userFirstName Text NOT NULL, userLastName Text NOT NULL,  userCreated timestamptz, userDisabled bool);"]
+  fromPostgresConduitT ts = fmap IxSet.fromList $ sequence $ map fromFields ts
+
+
+instance FromFields User where
+  fromFields fs = do
+    userId <- fromIdx fs 0
+    userFirstName <- fromIdx fs 1
+    userLastName <- fromIdx fs 2
+    userCreated <- fromIdx fs 3
+    userDisabled <- fromIdx fs 4
+    pure $ User{..}
+
+
+
 instance Serialise User
 
 type UserIxs = '[Int, Maybe Time.UTCTime, Bool]
@@ -112,9 +125,19 @@ data Address = Address  {
 } deriving (Eq, Show, Generic, Ord)
 
 instance PSQL.ToRow Address
-instance AcidSerialisePostgres (IxSet.IxSet a Address) where
+instance (IxSet.Indexable a Address) =>  AcidSerialisePostgres (IxSet.IxSet a Address) where
   toPostgresRows a = map PostgresRow (IxSet.toList a)
-  tableName _ = "app_address"
+  createTable _ = mconcat ["CREATE TABLE ", fromString (tableName (Proxy :: Proxy "Addresses")) ," (addressId integer NOT NULL, addressFirst Text NOT NULL, addressCountry Text NOT NULL);"]
+  fromPostgresConduitT ts = fmap IxSet.fromList $ sequence $ map fromFields ts
+
+
+instance FromFields Address where
+  fromFields fs = do
+    addressId <- fromIdx fs 0
+    addressFirst <- fromIdx fs 1
+    addressCountry <- fromIdx fs 2
+    pure $ Address{..}
+
 
 instance Serialise Address
 
@@ -171,9 +194,18 @@ data Phonenumber = Phonenumber  {
 } deriving (Eq, Show, Generic, Ord)
 
 instance PSQL.ToRow Phonenumber
-instance AcidSerialisePostgres (IxSet.IxSet a Phonenumber) where
+instance (IxSet.Indexable a Phonenumber) => AcidSerialisePostgres (IxSet.IxSet a Phonenumber) where
   toPostgresRows a = map PostgresRow (IxSet.toList a)
-  tableName _ = "app_phonenumber"
+  createTable _ = mconcat ["CREATE TABLE ", fromString (tableName (Proxy :: Proxy "Phonenumbers")) ," (phonenumberId integer NOT NULL, phonenumberNumber Text NOT NULL, phonenumberCallingCode integer NOT NULL,  phonenumberIsCell bool);"]
+  fromPostgresConduitT ts = fmap IxSet.fromList $ sequence $ map fromFields ts
+
+instance FromFields Phonenumber where
+  fromFields fs = do
+    phonenumberId <- fromIdx fs 0
+    phonenumberNumber <- fromIdx fs 1
+    phonenumberCallingCode <- fromIdx fs 2
+    phonenumberIsCell <- fromIdx fs 3
+    pure $ Phonenumber{..}
 
 instance Serialise Phonenumber
 

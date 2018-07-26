@@ -38,7 +38,7 @@ instance ToRow PostgresRow where
 
 
 storableEventCreateTable :: Query
-storableEventCreateTable = "CREATE TABLE storableevent (id SERIAL PRIMARY KEY, eventName Text NOT NULL, eventDate timestamptz NOT NULL, eventId uuid NOT NULL, eventArgs json NOT NULL);"
+storableEventCreateTable = "CREATE TABLE storableevent (id SERIAL PRIMARY KEY, eventName Text NOT NULL, eventDate timestamptz NOT NULL, eventId uuid NOT NULL, eventArgs json NOT NULL, eventCheckpointed bool NOT NULL DEFAULT FALSE);"
 
 data AcidSerialiserPostgresql
 
@@ -77,15 +77,20 @@ instance AcidSerialiseC AcidSerialiserPostgresql where
   type AcidSerialiseConstraintP AcidSerialiserPostgresql ss = CanSerialisePostgresql ss
 
 instance (AcidSerialisePostgres a) => AcidSerialiseSegment AcidSerialiserPostgresql a where
-  type AcidSerialiseSegmentT AcidSerialiserPostgresql = (String, PostgresRow)
-  serialiseSegment _ seg = yieldMany $  map (\r -> (tableName (Proxy :: Proxy a), r)) (toPostgresRows seg)
+  type AcidSerialiseSegmentT AcidSerialiserPostgresql = (PostgresRow)
+  type AcidDeserialiseSegmentT AcidSerialiserPostgresql = PostgresConduitT
+  serialiseSegment _ seg = yieldMany $ (toPostgresRows seg)
 
-  deserialiseSegment = error "deserialiseSegment"
+  deserialiseSegment _ = sinkList >>= \l -> runConversionToEither (fromPostgresConduitT l)
+
+tableName :: (ToUniqueText a) => Proxy a -> String
+tableName p = "app_" <>  (T.unpack . T.toLower $ (toUniqueText p))
+
 
 class AcidSerialisePostgres a where
   toPostgresRows :: a -> [PostgresRow]
-  tableName :: Proxy a -> String
   createTable :: Proxy a -> Query
+  fromPostgresConduitT :: [PostgresConduitT] -> Conversion a
 
 
 runConversionToEither :: (Monad m) => Conversion a -> m (Either Text a)
