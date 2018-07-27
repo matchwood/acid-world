@@ -146,25 +146,29 @@ instance AcidWorldBackend AcidWorldBackendFS where
             if eId == wrappedEventId we
               then yield $ Right we
               else yield (Left $ "Events log check failed - expected final event with id " <> showT eId <> " but got " <> showT (wrappedEventId we))
-  -- @todo this should be bracketed including bracketing the io action. Also the IO action should perhaps be restricted (if it loops to this then there will be trouble!). The internal state also needs to be rolled back if any part of this fails
-  handleUpdateEventC serializer s awu _ ec act = withTMVar (aWBStateFSEventsHandle s) $ \(eHdl, cHdl) -> do
+  -- @todo restrict the IO actions? also think a bit more about bracketing here and possible error scenarios
+  handleUpdateEventC serializer s awu _ ec prePersistHook postPersistHook = withTMVar (aWBStateFSEventsHandle s) $ \(eHdl, cHdl) -> do
     eBind (runUpdateC awu ec) $ \(es, r, onSuccess, onFail) -> do
         stEs <- mkStorableEvents es
 
         case extractLastEventId stEs of
           Nothing -> onFail >> (pure . Left $ AWExceptionEventSerialisationError "Could not extract event id, this can only happen if the passed eventC contains no events")
           Just lastEventId -> do
-            ioR <- act r
+            ioRPre <- onException (prePersistHook r) onFail
 
-            BL.hPut eHdl $ serializer stEs
-            hFlush eHdl
-            -- write over the check
-            liftIO $ hSeek cHdl AbsoluteSeek 0
-            BS.hPut cHdl (encodeUtf8 $ eventIdToText lastEventId)
-            hFlush cHdl
+            (flip onException) onFail $ do
+              BL.hPut eHdl $ serializer stEs
+              hFlush eHdl
+              -- write over the check
+              liftIO $ hSeek cHdl AbsoluteSeek 0
+              BS.hPut cHdl (encodeUtf8 $ eventIdToText lastEventId)
+              hFlush cHdl
+              onSuccess
+
             -- at this point the event has been definitively written
-            onSuccess
-            pure . Right $ (r, ioR)
+            ioRPost <- (postPersistHook r)
+
+            pure . Right $ (r, (ioRPre, ioRPost))
 
 
 startOrResumeCurrentEventsLog :: (MonadIO m, AcidSerialiseEvent t) => AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m (Handle, Handle)

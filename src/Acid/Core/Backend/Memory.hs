@@ -24,8 +24,10 @@ instance AcidWorldBackend AcidWorldBackendMemory where
   type AWBSerialiseT AcidWorldBackendMemory = BL.ByteString
   type AWBSerialiseConduitT AcidWorldBackendMemory = BS.ByteString
   initialiseBackend _ _  = pure . pure $ AWBStateMemory
-  handleUpdateEventC _ _ awu _ ec act = eBind (runUpdateC awu ec) $ \(_, r, onSuccess, _) -> do
-     ioR <- act r
-     onSuccess
-     pure . Right $ (r, ioR)
+  handleUpdateEventC _ _ awu _ ec prePersistHook postPersistHook = eBind (runUpdateC awu ec) $ \(_, r, onSuccess, onFail) -> do
+    ioRPre <- onException (prePersistHook r) onFail
+    onSuccess
+    ioRPost <- (postPersistHook r)
+
+    pure . Right $ (r, (ioRPre, ioRPost))
 

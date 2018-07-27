@@ -58,14 +58,15 @@ instance AcidWorldBackend AcidWorldBackendPostgresql where
     where
       sourceDatabase :: ConduitT i PostgresConduitT (ResourceT IO) ()
       sourceDatabase = do
-        -- the api for Postgresql-simple does not really allow composing a conduit from a fold or similar, though it should be easy
+        -- the api for Postgresql-simple does not really allow composing a conduit from a fold or similar, though it should be easy enough to do with the lower level libpq api
         res <- liftIO $ query_ (awbStatePostgresqlConnection s) "select * from storableEvent  where eventCheckpointed = FALSE ORDER BY id ASC"
         yieldMany $ res
 
-  handleUpdateEventC serializer s awu _ ec act = do
+  handleUpdateEventC serializer s awu _ ec prePersistHook postPersistHook  = do
     eBind (runUpdateC awu ec) $ \(es, r, onSuccess, onFail) -> do
       stEs <- mkStorableEvents es
-      ioR <- act r
+      ioRPre <- onException (prePersistHook r) onFail
+
       let rows = serializer stEs
       successIO <- toIO onSuccess
       failIO <- toIO onFail
@@ -77,9 +78,13 @@ instance AcidWorldBackend AcidWorldBackendPostgresql where
           then do
             failIO
             throwIO $ AWExceptionEventSerialisationError $ "Expected to write " <> showT (length rows) <> " but only wrote " <> showT res
-          else do
-            successIO
-            pure . Right $ (r, ioR)
+          else successIO
+
+
+
+      ioRPost <- finally (postPersistHook r) onSuccess
+
+      pure . Right $ (r, (ioRPre, ioRPost))
 
 
 insertCheckpoint :: forall t sFields m. ( AcidSerialiseSegmentT t ~ (PostgresRow), MonadUnliftIO m, All (AcidSerialiseSegmentFieldConstraint t) sFields)  => AWBState AcidWorldBackendPostgresql -> AcidSerialiseEventOptions t -> NP V.ElField sFields -> m ()

@@ -80,13 +80,13 @@ reopenAcidWorld (AcidWorld {..}) = do
 update :: forall ss nn n m t. (IsValidEvent ss nn n, MonadUnliftIO m, AcidSerialiseConstraint t ss n) => AcidWorld ss nn t -> Event n -> m (Either AWException (EventResult n))
 update aw e = updateC aw (EventC e)
 
-updateWithIO :: forall ss nn n m t ioRes. (IsValidEvent ss nn n, MonadUnliftIO m, AcidSerialiseConstraint t ss n) => AcidWorld ss nn t -> Event n -> (EventResult n -> m ioRes) -> m (Either AWException (EventResult n, ioRes))
+updateWithIO :: forall ss nn n m t ioResPre ioResPost. (IsValidEvent ss nn n, MonadUnliftIO m, AcidSerialiseConstraint t ss n) => AcidWorld ss nn t -> Event n -> (EventResult n -> m ioResPre) -> (EventResult n -> m ioResPost) -> m (Either AWException (EventResult n, (ioResPre, ioResPost)))
 updateWithIO aw e = updateCWithIO aw (EventC e)
 
 updateC :: forall ss nn firstN ns m t. (All (IsValidEvent ss nn) (firstN ': ns), All (ValidEventName ss) (firstN ': ns), MonadUnliftIO m, AcidSerialiseConstraintAll t ss  (firstN ': ns)) => AcidWorld ss nn t -> EventC (firstN ': ns) ->  m (Either AWException (EventResult firstN))
-updateC aw ec = (fmap  . fmap) fst $ updateCWithIO aw ec (const $ pure ())
+updateC aw ec = (fmap  . fmap) fst $ updateCWithIO aw ec (const $ pure ()) (const $ pure ())
 
-updateCWithIO :: forall ss nn firstN ns m t ioRes. (All (IsValidEvent ss nn) (firstN ': ns), All (ValidEventName ss) (firstN ': ns), MonadUnliftIO m, AcidSerialiseConstraintAll t ss  (firstN ': ns)) => AcidWorld ss nn t -> EventC (firstN ': ns) -> (EventResult firstN -> m ioRes) -> m (Either AWException (EventResult firstN, ioRes))
+updateCWithIO :: forall ss nn firstN ns m t ioResPre ioResPost. (All (IsValidEvent ss nn) (firstN ': ns), All (ValidEventName ss) (firstN ': ns), MonadUnliftIO m, AcidSerialiseConstraintAll t ss  (firstN ': ns)) => AcidWorld ss nn t -> EventC (firstN ': ns) -> (EventResult firstN -> m ioResPre) -> (EventResult firstN -> m ioResPost) -> m (Either AWException (EventResult firstN, (ioResPre, ioResPost)))
 updateCWithIO (AcidWorld {..}) ec = handleUpdateEventC ((serialiseEventNP acidWorldSerialiserOptions) :: NP (StorableEvent ss nn) (firstN ': ns) -> AcidSerialiseT t)  acidWorldBackendState acidWorldState acidWorldSerialiserOptions ec
 
 query ::forall ss nn t m a. MonadIO m => AcidWorld ss nn t -> (forall i. ValidAcidWorldState i ss => AWQuery i ss a) -> m a

@@ -56,9 +56,11 @@ class AcidWorldBackend (b :: k) where
       , MonadUnliftIO m
       , ValidAcidWorldState u ss) =>
              (NP (StorableEvent ss nn) (firstN ': ns) -> AWBSerialiseT b)
-          -> (AWBState b) -> (AWState u ss)
+          -> (AWBState b)
+          -> (AWState u ss)
           -> AcidSerialiseEventOptions t
           -> EventC (firstN ': ns)
-          -> (EventResult firstN -> m ioRes)
-          -> m (Either AWException  (EventResult firstN, ioRes))
+          -> (EventResult firstN -> m ioResPre) -- run after state update but before persistence - if this errors then the events will not be persisted
+          -> (EventResult firstN -> m ioResPost) -- run after persistence - question - should it be run while updates are locked? there is no particular reason for that aside from possible user requirements, but then again, if it runs afterwards then what is the point in having it, as it is the same as handleUpdateEventC >>= postPersist - maybe just get rid of it entirely?
+          -> m (Either AWException  (EventResult firstN, (ioResPre, ioResPost)))
 
