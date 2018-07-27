@@ -22,7 +22,7 @@ data AcidStatePureState
 
 instance AcidWorldState AcidStatePureState where
   data AWState AcidStatePureState ss = AWStatePureState {
-      aWStatePureStateState :: !(TMVar (SegmentsState ss)), -- @todo this implementation does not allow for queries to run while updates are running
+      aWStatePureStateState :: !(TMVar (SegmentsState ss)), -- @todo this implementation does not allow for queries to run while updates are running, so guarantees the absolute multi threaded order of updates and queries. This stops a situation when you issue a query and follow it with an update dependent on those results, even though a separate update was in progress. should be provide a way to run queries while updates are running?
       awStatePureStateInvariants :: Invariants ss
     }
   data AWConfig AcidStatePureState ss = AWConfigPureState
@@ -67,6 +67,7 @@ instance AcidWorldState AcidStatePureState where
               go (Right a) = loop (f s a)
       applyToState :: SegmentsState ss -> WrappedEvent ss nn -> SegmentsState ss
       applyToState s e = snd $ runAWUpdatePureState (runWrappedEvent e) s invars
+
 
   runUpdateC :: forall ss firstN ns m. (ValidAcidWorldState AcidStatePureState ss, All (ValidEventName ss) (firstN ': ns), MonadIO m) => AWState AcidStatePureState ss -> EventC (firstN ': ns) ->  m (Either AWException (NP Event (firstN ': ns), EventResult firstN, m (), m ()))
   runUpdateC awState ec = liftIO $ STM.atomically $ do

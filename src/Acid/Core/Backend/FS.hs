@@ -42,13 +42,15 @@ data AcidWorldBackendFS
 sha256 :: BL.ByteString -> Hash.Digest Hash.SHA256
 sha256 = Hash.hashlazy
 
--- @todo add exception handling?
-withTMVar :: (MonadIO m) => TMVar a -> (a -> m b) -> m b
-withTMVar m io = do
-  a <- liftIO $ atomically $ TMVar.takeTMVar m
-  b <- io a
-  liftIO $ atomically $ TMVar.putTMVar m a
+
+
+withTMVarSafe :: (MonadIO m, MonadUnliftIO m) => TMVar a -> (a -> m b) -> m b
+withTMVarSafe m io = do
+  a <- liftIO . atomically $ TMVar.takeTMVar m
+  b <- onException (io a) (liftIO . atomically $ TMVar.putTMVar m a)
+  liftIO . atomically $ TMVar.putTMVar m a
   pure b
+
 
 modifyTMVar :: (MonadIO m) => TMVar a -> (a -> m (a, b)) -> m b
 modifyTMVar m io = do
@@ -82,6 +84,7 @@ instance AcidWorldBackend AcidWorldBackendFS where
 
     let currentS = currentStateFolder (aWBStateFSConfig s)
         previousS = previousStateFolder (aWBStateFSConfig s)
+    -- @todo add some exception handling here and possible recoveries
     -- close the current events log and return current state - as soon as this completes updates can start runnning again
     sToWrite <- modifyTMVar (aWBStateFSEventsHandle s) $ \(eHdl, cHdl) -> do
       liftIO $ hClose eHdl
@@ -115,7 +118,7 @@ instance AcidWorldBackend AcidWorldBackendFS where
     pure (error "AcidWorldBackendFS has been closed", ())
 
   loadEvents deserialiseConduit s _ =  do
-    expectedLastEventId <- liftIO $ withTMVar (aWBStateFSEventsHandle s) $ \(_, cHdl) -> do
+    expectedLastEventId <- liftIO $ withTMVarSafe (aWBStateFSEventsHandle s) $ \(_, cHdl) -> do
       liftIO $ hSeek cHdl AbsoluteSeek 0
       empty <- hIsEOF cHdl
       if empty
@@ -125,7 +128,7 @@ instance AcidWorldBackend AcidWorldBackendFS where
     case expectedLastEventId of
       Left err -> pure . Left $ AWExceptionEventSerialisationError err
       Right lastEventId -> pure . Right  $ LoadEventsConduit $ \restConduit -> liftIO $
-        withTMVar (aWBStateFSEventsHandle s) $ \(eHdl, _) -> runConduitRes $
+        withTMVarSafe (aWBStateFSEventsHandle s) $ \(eHdl, _) -> runConduitRes $
           sourceHandle eHdl .|
           deserialiseConduit .|
           checkLastEventIdConduit lastEventId .|
@@ -137,8 +140,12 @@ instance AcidWorldBackend AcidWorldBackendFS where
         where
           loop :: Maybe EventId -> Maybe (Either Text (WrappedEvent ss nn)) -> Maybe (Either Text (WrappedEvent ss nn)) -> (ConduitT (Either Text (WrappedEvent ss nn)) (Either Text (WrappedEvent ss nn)) (ResourceT IO) ())
           loop Nothing Nothing _ = pure ()
-          loop (Just eId) Nothing _ = yield (Left $ "Expected event with id " <> showT eId <> " to be the last entry in this log but it was never encountered")
-          loop Nothing (Just _) _ = pure () -- @essential @todo we encountered an event (or multiple events?) that weren't fully persisted - anything after this point should be thrown away - also we should logWarn this (@log)
+          loop (Just eId) Nothing _ = yield (Left $ "Expected event with id " <> showT eId <> " to be the last entry in this log but it was never encountered - it looks like the event log has been truncated")
+          loop Nothing (Just _) _ =
+             -- @essential @todo we encountered an event/parse failures (or multiple events/errors?) for events that weren't fully persisted - anything after this point should be thrown away with a logWarn (@log) and the events file itself should be truncated to this point - this is a recoverable error but we need to implement the recovery, so for now we just fail.
+
+             yield (Left $ "Encountered event that was not fully persisted - recovery is possible but has not yet been implemented")
+
           loop e (Just we1) (Just we2) = yield we1 >> await >>= loop e (Just we2)
           loop (Just _) (Just (Left err)) Nothing = yield (Left err) -- the last entry is already an error
           -- this is the last entry
@@ -147,7 +154,9 @@ instance AcidWorldBackend AcidWorldBackendFS where
               then yield $ Right we
               else yield (Left $ "Events log check failed - expected final event with id " <> showT eId <> " but got " <> showT (wrappedEventId we))
   -- @todo restrict the IO actions? also think a bit more about bracketing here and possible error scenarios
-  handleUpdateEventC serializer s awu _ ec prePersistHook postPersistHook = withTMVar (aWBStateFSEventsHandle s) $ \(eHdl, cHdl) -> do
+
+
+  handleUpdateEventC serializer s awu _ ec prePersistHook postPersistHook = withTMVarSafe (aWBStateFSEventsHandle s) $ \(eHdl, cHdl) -> do
     eBind (runUpdateC awu ec) $ \(es, r, onSuccess, onFail) -> do
         stEs <- mkStorableEvents es
 

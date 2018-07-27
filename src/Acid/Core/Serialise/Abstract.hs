@@ -54,7 +54,7 @@ class (Semigroup (AcidSerialiseT t), Monoid (AcidSerialiseT t)) => AcidSerialise
 
   serialiserName p = T.pack $ (showsTypeRep . typeRep $ p) ""
   serialiseStorableEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> StorableEvent ss nn n -> AcidSerialiseT t
-  -- @todo we don't actually use this anywhere - perhaps just remmove it?
+  -- @todo we don't actually use this anywhere - perhaps just remove it?
   deserialiseStorableEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> (Either Text (StorableEvent ss nn n))
 
   makeDeserialiseParsers :: (ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn) => AcidSerialiseEventOptions t -> Proxy ss -> Proxy nn -> AcidSerialiseParsers t ss nn
