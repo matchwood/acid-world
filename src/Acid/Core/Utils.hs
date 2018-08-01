@@ -33,6 +33,13 @@ modifyTMVar m io = do
   liftIO $ atomically $ TMVar.putTMVar m a'
   pure b
 
+modifyTMVarSafe :: (MonadIO m, MonadUnliftIO m) => TMVar a -> (a -> m (a, b)) -> m b
+modifyTMVarSafe m io = do
+  a <- liftIO $ atomically $ TMVar.takeTMVar m
+  (a', b) <- onException (io a) (liftIO . atomically $ TMVar.putTMVar m a)
+  liftIO $ atomically $ TMVar.putTMVar m a'
+  pure b
+
 
 
 eBind :: (Monad m) => m (Either a b) -> (b -> m (Either a c)) -> m (Either a c)

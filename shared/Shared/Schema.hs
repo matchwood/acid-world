@@ -4,6 +4,7 @@
 module Shared.Schema where
 
 import RIO
+import qualified RIO.HashMap as HM
 
 import qualified RIO.Time as Time
 
@@ -18,6 +19,7 @@ import qualified Data.IxSet.Typed as IxSet
 import Acid.World
 import Codec.Serialise
 import Data.SafeCopy
+import Acid.Core.State.CacheState
 
 import qualified Database.PostgreSQL.Simple.ToRow as PSQL
 
@@ -77,6 +79,11 @@ instance NFData User
 instance Segment "Users" where
   type SegmentS "Users" = UserIxSet
   defaultState _ = IxSet.empty
+
+instance Segment "UsersHM" where
+  type SegmentS "UsersHM" = HM.HashMap Int (CVal User)
+  defaultState _ = HM.empty
+
 
 insertUser :: (ValidAcidWorldState i ss, HasSegmentAndInvar ss  "Users") => User -> AWUpdate i ss User
 insertUser a = do
@@ -159,6 +166,12 @@ instance Segment "Addresses" where
   defaultState _ = IxSet.empty
 
 
+instance Segment "AddressesHM" where
+  type SegmentS "AddressesHM" = HM.HashMap Int (CVal Address)
+  defaultState _ = HM.empty
+
+
+
 insertAddress :: (ValidAcidWorldState i ss, HasSegmentAndInvar ss  "Addresses") => Address -> AWUpdate i ss Address
 insertAddress a = do
   ls <- getSegment (Proxy :: Proxy "Addresses")
@@ -226,6 +239,10 @@ instance NFData Phonenumber
 instance Segment "Phonenumbers" where
   type SegmentS "Phonenumbers" = PhonenumberIxSet
   defaultState _ = IxSet.empty
+
+instance Segment "PhonenumbersHM" where
+  type SegmentS "PhonenumbersHM" = HM.HashMap Int (CVal Phonenumber)
+  defaultState _ = HM.empty
 
 
 insertPhonenumber :: (ValidAcidWorldState i ss, HasSegmentAndInvar ss  "Phonenumbers") => Phonenumber -> AWUpdate i ss Phonenumber

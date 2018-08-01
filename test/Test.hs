@@ -19,6 +19,7 @@ import qualified Data.IxSet.Typed as IxSet
 import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Property as QCP
 
+import Acid.Core.State.CacheState
 
 
 
@@ -50,7 +51,8 @@ tests = testGroup "Tests" $
   withBackends persistentBackendSerialiserTests (backendsWithAllSerialisers persistentBackendsWithGzip) ++
   withBackends persistentBackendConstraintTests (backendsWithSerialisers persistentBackends [defaultAppSerialiser]) ++
   fsSpecificTests (\t -> AWBConfigFS t True) defaultAppSerialiser ++
-  [postgresSpecificTests]
+  [postgresSpecificTests] ++
+  [cacheStateSpecificTests]
 
 
 
@@ -93,6 +95,14 @@ postgresSpecificTests =
   testGroup ("Backend: Postgresql") [
     testCaseSteps "insertAndRestoreState" $ unit_insertAndRestoreStatePostgres
   ]
+
+cacheStateSpecificTests :: TestTree
+cacheStateSpecificTests =
+  testGroup ("CacheState: ") [
+    testCaseSteps "insertAndRestoreState" $ unit_insertAndRestoreStateCacheState
+  ]
+
+
 
 genStorableEvent :: QC.Gen (StorableEvent AppSegments AppEvents "insertUser")
 genStorableEvent = do
@@ -394,6 +404,28 @@ unit_insertAndRestoreStatePostgres step = do
   -- this fails when generated texts contains \NUL (see https://github.com/lpsmith/postgresql-simple/issues/223)
       usFixedFinally = map (\u -> u{userFirstName = T.takeWhile  ((/=) '\NUL') (userFirstName u), userLastName = T.takeWhile  ((/=) '\NUL') (userLastName u)}) usFixed
   assertBool "Fetched user list did not match inserted user list after checkpoint restore" (L.sort usFixedFinally == L.sort usFixed2)
+
+
+
+unit_insertAndRestoreStateCacheState :: (String -> IO ()) -> Assertion
+unit_insertAndRestoreStateCacheState step = do
+
+  step "Opening cache state"
+  cs <- throwEither $ openCacheStateFresh
+  us <- QC.generate $ generateUsers 100000
+  step "Insert users"
+  runUpdateCS cs (insertManyC (Proxy :: Proxy "UsersHM") $ map (\u -> (userId u, u)) us)
+
+  step "Fetch users"
+  us2 <- runUpdateCS cs (fetchAllC (Proxy :: Proxy "UsersHM"))
+  assertBool "Fetched user list did not match inserted user list" (L.sort us == L.sort us2)
+  step "Reopen cache state"
+
+  cs2 <- throwEither $ reopenCacheState cs
+  us3 <- runUpdateCS cs2 (fetchAllC (Proxy :: Proxy "UsersHM"))
+  assertBool "Fetched user list after restore did not match inserted user list" (L.sort us == L.sort us3)
+
+
 
 
 

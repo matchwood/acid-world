@@ -19,6 +19,8 @@ import Test.QuickCheck as QC
 import qualified System.IO.Temp as Temp
 import qualified  System.FilePath as FilePath
 import Acid.World
+import Acid.Core.State.CacheState
+
 import qualified Database.PostgreSQL.Simple as PSQL
 import Shared.Schema
 import Data.Char(toLower)
@@ -98,6 +100,9 @@ instance NFData (AcidWorld a n t) where
 
 
 type AppSegments = '["Users", "Addresses", "Phonenumbers"]
+
+type CAppSegments = '["UsersHM", "AddressesHM", "PhonenumbersHM"]
+
 type AppEvents = '["insertUser", "insertAddress", "insertPhonenumber"]
 
 type AppAW s = AcidWorld AppSegments AppEvents s
@@ -271,3 +276,18 @@ getAbsDirectoryContentsRecursive dirPath = do
   return $ concat paths
 
 
+
+
+{-
+
+  Cache state
+-}
+
+
+openCacheStateFresh :: IO (Either AWException (CacheState CAppSegments))
+openCacheStateFresh = do
+  t <- mkTempDir
+  openCacheState t
+
+runInsertUserCS :: CacheState CAppSegments -> User -> IO ()
+runInsertUserCS cs u = runUpdateCS cs (insertC (Proxy :: Proxy "UsersHM") (userId u) u)
