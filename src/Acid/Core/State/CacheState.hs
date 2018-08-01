@@ -5,7 +5,6 @@ module Acid.Core.State.CacheState where
 import RIO
 import qualified RIO.HashMap as HM
 import qualified RIO.Text as T
-import qualified RIO.ByteString as BS
 import Database.LMDB.Simple
 import qualified Control.Concurrent.STM  as STM
 import qualified Control.Monad.State.Strict as St
@@ -24,21 +23,9 @@ import Acid.Core.Utils
 import Acid.Core.Segment
 import qualified Control.Monad.Reader as Re
 
+import qualified Data.IxSet.Typed as IxSet
 
-newtype Ref = Ref BS.ByteString
 
-data CVal a =
-    CVal a
-  | CValRef
-
-runCVal :: (ValidCSegment segmentName, HasSegmentDb ss segmentName) => Proxy segmentName -> ((CMapKey (SegmentS segmentName)), CVal (CMapValue (SegmentS segmentName))) -> CUpdate ss (CMapValue (SegmentS segmentName))
-runCVal _ (_, CVal a) = pure a
-runCVal ps (k, CValRef) = do
-  db <- getSegmentDb ps
-  mV <- CUpdate . lift . lift $ getW db k
-  case mV of
-    Nothing -> CUpdate . lift $ throwIO $ AWExceptionSegmentDeserialisationError "Database did not contain value for key"
-    Just v -> pure v
 
 
 class (IsCMap (SegmentS segmentName), Segment segmentName) => ValidCSegment segmentName
@@ -77,6 +64,9 @@ newtype SegmentsDb segmentNames = SegmentsDb {segmentsDbFieldRec :: V.AFieldRec 
 getSegmentDbP :: forall s ss. (HasSegmentDb ss s) => Proxy s ->  SegmentsDb ss -> SegmentDb s
 getSegmentDbP _ (SegmentsDb fr) = V.getField $ V.rgetf (V.Label :: V.Label s) fr
 
+npToSegmentsDb :: forall ss. (ValidSegmentsCacheState ss) => NP V.ElField (ToSegmentDBFields ss) -> SegmentsDb ss
+npToSegmentsDb np = SegmentsDb $ (npToVinylARec id np)
+
 
 putW :: ValidCSegment s =>  SegmentDb s -> CMapKey (SegmentS s) -> Maybe (CMapValue (SegmentS s)) -> Transaction ReadWrite ()
 putW (SegmentDb s) = put s
@@ -84,26 +74,72 @@ putW (SegmentDb s) = put s
 getW :: ValidCSegment s => SegmentDb s -> CMapKey (SegmentS s) -> Transaction ReadWrite (Maybe (CMapValue (SegmentS s)))
 getW (SegmentDb s) = get s
 
-npToSegmentsDb :: forall ss. (ValidSegmentsCacheState ss) => NP V.ElField (ToSegmentDBFields ss) -> SegmentsDb ss
-npToSegmentsDb np = SegmentsDb $ (npToVinylARec id np)
+
+data CVal a =
+    CVal a
+  | CValRef
+
+data CValIxs ixs a =
+    CValIxs a
+  | CValIxsRef (NP I ixs)
+
+runCVal :: (ValidCSegment segmentName, HasSegmentDb ss segmentName) => Proxy segmentName -> ((CMapKey (SegmentS segmentName)), CVal (CMapValue (SegmentS segmentName))) -> CUpdate ss (CMapValue (SegmentS segmentName))
+runCVal _ (_, CVal a) = pure a
+runCVal ps (k, CValRef) = do
+  db <- getSegmentDb ps
+  mV <- CUpdate . lift . lift $ getW db k
+  case mV of
+    Nothing -> CUpdate . lift $ throwIO $ AWExceptionSegmentDeserialisationError "Database did not contain value for key"
+    Just v -> pure v
+
+class ReduceableVal a where
+  emptyVal :: a v
+  reduceVal :: a v -> a v
+  wrapVal :: v -> a v
+  expandVal :: (ValidCSegment s, HasSegmentDb ss s) =>  Proxy s -> (CMapKey (SegmentS s), a (CMapValue (SegmentS s))) -> CUpdate ss (CMapValue (SegmentS s))
+
+instance ReduceableVal CVal where
+  emptyVal = CValRef
+  reduceVal _ = CValRef
+  wrapVal = CVal
+  expandVal _ (_, CVal a) = pure a
+  expandVal ps (k, CValRef) = do
+  db <- getSegmentDb ps
+  mV <- CUpdate . lift . lift $ getW db k
+  case mV of
+    Nothing -> CUpdate . lift $ throwIO $ AWExceptionSegmentDeserialisationError "Database did not contain value for key"
+    Just v -> pure v
 
 
-class (Show (CMapKey a), Serialise (CMapKey a), Serialise (CMapValue a)) => IsCMap a where
+
+class (Show (CMapKey a), Serialise (CMapKey a), Serialise (CMapValue a), ReduceableVal (CMapWrapper a)) => IsCMap a where
+  type CMapWrapper a :: * -> *
   type CMapKey a
   type CMapValue a
-  insertMapC :: (CMapKey a) -> CVal (CMapValue a) -> a -> a
+  insertMapC :: (CMapKey a) -> CMapWrapper a (CMapValue a) -> a -> a
   emptyMapC :: a
   restoreMapC :: [CMapKey a] -> a
-  toListMapC :: a -> [(CMapKey a, CVal (CMapValue a))]
-
+  toListMapC :: a -> [(CMapKey a, CMapWrapper a (CMapValue a))]
 
 instance (Show k, Serialise k, Serialise v, Eq k, Hashable k) => IsCMap (HM.HashMap k (CVal v)) where
+  type CMapWrapper (HM.HashMap k (CVal v)) = CVal
   type CMapKey (HM.HashMap k (CVal v)) = k
   type CMapValue (HM.HashMap k (CVal v)) = v
   insertMapC = HM.insert
   emptyMapC = HM.empty
   restoreMapC = HM.fromList . (map (\k -> (k, CValRef)))
   toListMapC = HM.toList
+
+
+
+instance IsCMap (IxSet.IxSet ixs (CValIxs ixs v)) where
+  type CMapWrapper (IxSet.IxSet ixs (CValIxs ixs v)) = CValIxs ixs
+  --type CMapKey (IxSet.IxSet ixs (CValIxs ixs v)) = CValIxs ixs
+  type CMapValue (IxSet.IxSet ixs (CValIxs ixs v)) = v
+  --insertMapC = HM.insert
+  emptyMapC = IxSet.empty
+  --restoreMapC = HM.fromList . (map (\k -> (k, CValRef)))
+  --toListMapC = HM.toList
 
 data CacheState ss = CacheState {
   cacheStatePath :: FilePath,
@@ -182,7 +218,7 @@ insertC ps k v = do
   db <- getSegmentDb ps
   CUpdate . lift . lift $ putW db k (Just v)
   seg <- getSegmentC ps
-  let newSeg = insertMapC k (CVal v) seg
+  let newSeg = insertMapC k (wrapVal v) seg
   putSegmentC ps newSeg
 
 insertManyC :: (ValidCSegment segmentName, HasSegment ss segmentName, HasSegmentDb ss segmentName) => Proxy segmentName -> [(CMapKey (SegmentS segmentName),CMapValue (SegmentS segmentName))]  -> CUpdate ss ()
@@ -191,8 +227,7 @@ insertManyC ps vs = do
   CUpdate . lift . lift $ mapM_ (\(k, v) -> putW db k (Just v)) vs
 
   seg <- getSegmentC ps
-  let newSeg = foldl' (\s (k,v) -> insertMapC k (CVal v) s) seg vs
-  --let newSeg = insertMapC k (CVal v) seg
+  let newSeg = foldl' (\s (k,v) -> insertMapC k (wrapVal v) s) seg vs
   putSegmentC ps newSeg
 
 
@@ -200,7 +235,7 @@ fetchAllC :: (ValidCSegment segmentName, HasSegment ss segmentName, HasSegmentDb
 fetchAllC ps = do
   seg <- getSegmentC ps
   let tups = toListMapC seg
-  mapM (runCVal ps) tups
+  mapM (expandVal ps) tups
 
 
 
