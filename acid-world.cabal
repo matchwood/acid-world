@@ -34,6 +34,7 @@ library
     Acid.Core.State
     Acid.Core.State.Abstract
     Acid.Core.State.PureState
+    Acid.Core.State.CacheState
   other-modules:
     Paths_acid_world
   build-depends:
@@ -58,7 +59,8 @@ library
     cryptonite,
     memory,
     crc,
-    postgresql-simple
+    postgresql-simple,
+    lmdb-simple
 
 
   hs-source-dirs:      src

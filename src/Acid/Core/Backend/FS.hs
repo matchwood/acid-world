@@ -44,20 +44,6 @@ sha256 = Hash.hashlazy
 
 
 
-withTMVarSafe :: (MonadIO m, MonadUnliftIO m) => TMVar a -> (a -> m b) -> m b
-withTMVarSafe m io = do
-  a <- liftIO . atomically $ TMVar.takeTMVar m
-  b <- onException (io a) (liftIO . atomically $ TMVar.putTMVar m a)
-  liftIO . atomically $ TMVar.putTMVar m a
-  pure b
-
-
-modifyTMVar :: (MonadIO m) => TMVar a -> (a -> m (a, b)) -> m b
-modifyTMVar m io = do
-  a <- liftIO $ atomically $ TMVar.takeTMVar m
-  (a', b) <- io a
-  liftIO $ atomically $ TMVar.putTMVar m a'
-  pure b
 
 
 instance AcidWorldBackend AcidWorldBackendFS where

@@ -15,6 +15,24 @@ import Data.Proxy(Proxy(..))
 
 import Generics.SOP.NP
 import qualified Generics.SOP as SOP
+import qualified Control.Concurrent.STM.TMVar as  TMVar
+
+
+withTMVarSafe :: (MonadIO m, MonadUnliftIO m) => TMVar a -> (a -> m b) -> m b
+withTMVarSafe m io = do
+  a <- liftIO . atomically $ TMVar.takeTMVar m
+  b <- onException (io a) (liftIO . atomically $ TMVar.putTMVar m a)
+  liftIO . atomically $ TMVar.putTMVar m a
+  pure b
+
+
+modifyTMVar :: (MonadIO m) => TMVar a -> (a -> m (a, b)) -> m b
+modifyTMVar m io = do
+  a <- liftIO $ atomically $ TMVar.takeTMVar m
+  (a', b) <- io a
+  liftIO $ atomically $ TMVar.putTMVar m a'
+  pure b
+
 
 
 eBind :: (Monad m) => m (Either a b) -> (b -> m (Either a c)) -> m (Either a c)
