@@ -412,9 +412,10 @@ unit_insertAndRestoreStateCacheState step = do
 
   step "Opening cache state"
   cs <- throwEither $ openCacheStateFresh
-  us <- QC.generate $ generateUsers 100000
+  us <- QC.generate $ generateUsers 10000
   step "Insert users"
-  runUpdateCS cs (insertManyC (Proxy :: Proxy "UsersHM") $ map (\u -> (userId u, u)) us)
+  --runUpdateCS cs (insertManyC (Proxy :: Proxy "UsersHM") $ map (\u -> (userId u, u)) us)
+  mapM_ (runInsertUserCS cs) us
 
   step "Fetch users"
   us2 <- runUpdateCS cs (fetchAllC (Proxy :: Proxy "UsersHM"))
