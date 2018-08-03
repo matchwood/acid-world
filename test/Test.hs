@@ -411,7 +411,7 @@ unit_insertAndRestoreStatePostgres step = do
 
 
 unit_insertAndRestoreStateCacheState :: CacheMode -> (String -> IO ()) -> Assertion
-unit_insertAndRestoreStateCacheState cm step = runInBoundThread $ do
+unit_insertAndRestoreStateCacheState cm step = runInBoundThread $ do -- closeCacheState needs to be run in a bound thread
 
   step "Opening cache state"
   cs <- throwEither $ openCacheStateFresh cm
