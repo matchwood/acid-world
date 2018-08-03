@@ -235,6 +235,7 @@ benchmark acid-world-benchmark
                      , postgresql-simple
                      , uuid
                      , postgresql-libpq
+                     , lmdb-simple
 
 
   default-language:    Haskell2010

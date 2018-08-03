@@ -1,4 +1,6 @@
 
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+
 module Main (main) where
 
 import RIO
@@ -11,6 +13,7 @@ import Shared.App
 
 import Acid.World
 import qualified Test.QuickCheck as QC
+import Database.LMDB.Simple
 
 
 
@@ -20,8 +23,14 @@ main = do
   let conf = defaultConfig
   -- it seems like we should perRunEnv for the generateUser part of this, but that causes major issues with criterion - something like 3 or 4 order of magnitude slow down in the benchmarked code
   defaultMainWith conf $
-    map serialiserBenchmarks allSerialisers
+    map serialiserBenchmarks allSerialisers ++
 
+    [bgroup "LMDB" [
+      env (openLMDB) $ \ ~(e, db) ->
+        bench "insertUserIndividually" $ whnfIO ((QC.generate $ generateUsers 50) >>= (\us -> mapM (\u -> transaction e (put db (userId u) (Just u))) us)),
+      env (openLMDB) $ \ ~(e, db) ->
+        bench "insertUserGrouped" $ whnfIO ((QC.generate $ generateUsers 50) >>= (\us -> transaction e (mapM (\u -> put db (userId u) (Just u)) us)))
+    ]]
 
 serialiserBenchmarks :: AppValidSerialiser -> Benchmark
 serialiserBenchmarks (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) =
@@ -40,6 +49,17 @@ serialiserBenchmarks (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) =
                bench "insertUser" $ whnfIO (generateUserIO >>= runInsertUser aw)
              ]
     ]
+instance NFData (Database a b) where
+  rnf _ = ()
+instance NFData (Environment e) where
+  rnf _ = ()
+
+openLMDB :: IO (Environment ReadWrite, Database Int User)
+openLMDB = do
+  t <- mkTempDir
+  e <- openEnvironment t (defaultLimits{maxDatabases = 200, mapSize = 1024 * 1024 * 1000})
+  db <- readWriteTransaction e $ (getDatabase (Just "users"))
+  pure (e, db)
 
 makeTestState :: AppValidSerialiser -> IO ()
 makeTestState (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = do
