@@ -102,6 +102,7 @@ class (Serialise (CDBMapKey a), Serialise (CDBMapValue a)) => IsCMap a where
   type CDBMapValue a
   type CDBMapValue a = CMapValue a
   insertMapC :: CacheMode -> CMapKey a ->  CMapValue a -> Database (CDBMapKey a) (CDBMapValue a) -> a -> Transaction ReadWrite (a)
+  insertManyMapC :: CacheMode -> [(CMapKey a, CMapValue a)] ->  Database (CDBMapKey a) (CDBMapValue a) -> a -> Transaction ReadWrite (a)
   expandMap ::  Database (CDBMapKey a) (CDBMapValue a) -> a -> Transaction ReadOnly (CMapExpanded a)
   restoreMapC :: CacheMode -> Database (CDBMapKey a) (CDBMapValue a) -> Transaction ReadOnly a
 
@@ -118,6 +119,10 @@ instance (Serialise k, Serialise v, Eq k, Hashable k) => IsCMap (HM.HashMap k (C
   insertMapC cm k v db hm = do
     put db k (Just v)
     pure $ HM.insert k (toCachedCVal cm v) hm
+  insertManyMapC cm vs db hm = do
+    mapM_ (\(k, v) -> put db k (Just v)) vs
+    pure $ foldl' (\s (k,v) -> HM.insert k (toCachedCVal cm v) s) hm vs
+
   expandMap db hm = sequence $ HM.mapWithKey expandVal hm
     where
       expandVal :: k -> (CVal v) -> Transaction ReadOnly v
@@ -226,6 +231,12 @@ instance (CIndexable ixs v, All Serialise ixs, IxSet.IsIndexOf (IxsetPrimaryKey 
     let inds = indexableToIndexes v :: NP [] ixs
     put db (ixsetIdxsKeyPrefix <> pKey) (Just (BL.toStrict . serialise $ inds))
     pure $ IxSet.updateIx k (toCachedCValIxs cm pKey v inds) ixset
+
+  insertManyMapC cm vs db ixset = do
+    foldM (\is (k, v) -> insertMapC cm k v db is) ixset vs
+
+
+
 
   restoreMapC cm db =
     case cm of
@@ -377,6 +388,15 @@ insertC ps k v = do
   newSeg <- CUpdate . lift . lift $ insertMapC cm k v db seg
   putSegmentC ps newSeg
 
+insertManyC :: (ValidCSegment segmentName, HasSegment ss segmentName, HasSegmentDb ss segmentName) => Proxy segmentName -> [(CMapKey (SegmentS segmentName), CMapValue (SegmentS segmentName))]  -> CUpdate ss ()
+insertManyC ps vs = do
+  (cm, db) <- fmap segmentDbDatabase $ getSegmentDb ps
+  seg <- getSegmentC ps
+  newSeg <- CUpdate . lift . lift $ insertManyMapC cm vs db seg
+  putSegmentC ps newSeg
+
+
+
 
 getCacheModePure :: (SegmentC segmentName) => CacheMode -> Proxy segmentName -> CacheMode
 getCacheModePure gcm ps =
@@ -385,15 +405,6 @@ getCacheModePure gcm ps =
     SegmentCacheModeAll -> CacheModeAll
     SegmentCacheModeNone -> CacheModeNone
 
-{-
-insertManyC :: (ValidCSegment segmentName, HasSegment ss segmentName, HasSegmentDb ss segmentName) => Proxy segmentName -> [(CMapKey (SegmentS segmentName),CMapValue (SegmentS segmentName))]  -> CUpdate ss ()
-insertManyC ps vs = do
-  db <- getSegmentDb ps
-  CUpdate . lift . lift $ mapM_ (\(k, v) -> putW db k (Just v)) vs
-
-  seg <- getSegmentC ps
-  let newSeg = foldl' (\s (k,v) -> insertMapC k (wrapVal v) s) seg vs
-  putSegmentC ps newSeg-}
 
 
 fetchMapC :: (ValidCSegment segmentName, HasSegment ss segmentName, HasSegmentDb ss segmentName) => Proxy segmentName -> CQuery ss (CMapExpanded (SegmentS segmentName))

@@ -418,11 +418,12 @@ unit_insertAndRestoreStateCacheState cm step = runInBoundThread $ do -- closeCac
   us <- QC.generate $ generateUsers 500
   usCS <- QC.generate $ generateUsers 500
   step "Insert users into HM"
-  --runUpdateCS cs (insertManyC (Proxy :: Proxy "UsersHM") $ map (\u -> (userId u, u)) us)
-  mapM_ (runInsertUserHM cs) us
+  runUpdateCS cs (insertManyC (Proxy :: Proxy "UsersHM") $ map (\u -> (userId u, u)) us)
+  --mapM_ (runInsertUserHM cs) us
 
   step "Insert users into CS"
-  mapM_ (runInsertUserCS cs) usCS
+  runUpdateCS cs (insertManyC (Proxy :: Proxy "UsersCS") $ map (\u -> (userId u, u)) usCS)
+  --mapM_ (runInsertUserCS cs) usCS
 
   step "Fetch users"
   us2 <- runQueryCS cs (fetchMapC (Proxy :: Proxy "UsersHM"))
