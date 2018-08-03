@@ -60,7 +60,8 @@ library
     memory,
     crc,
     postgresql-simple,
-    lmdb-simple
+    lmdb-simple,
+    ixset-typed
 
 
   hs-source-dirs:      src

@@ -9,4 +9,7 @@ extra-deps:
 - serialise-0.2.0.0
 - cborg-0.2.0.0
 - crc-0.1.0.0
-- lmdb-simple-0.4.0.0
+- git: git@github.com:matchwood/ixset-typed.git
+  commit: 15ddd9eb9a7811c0a1797201de4e52f2ad8dc259
+- git: git@github.com:matchwood/lmdb-simple.git
+  commit: 637f702aae298ce8000dacb3a1b5e3ac7b0a2664

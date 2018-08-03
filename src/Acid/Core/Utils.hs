@@ -18,7 +18,17 @@ import qualified Generics.SOP as SOP
 import qualified Control.Concurrent.STM.TMVar as  TMVar
 
 
-withTMVarSafe :: (MonadIO m, MonadUnliftIO m) => TMVar a -> (a -> m b) -> m b
+class ExtractFromNP (xs :: [*]) (x :: *) where
+  extractFromNP :: NP a xs -> a x
+
+instance {-# OVERLAPPING #-} ExtractFromNP (x ': xs) x where
+  extractFromNP ((:*) x _) = x
+
+instance {-# OVERLAPPABLE #-} (ExtractFromNP xs x) => ExtractFromNP (y ': xs) x where
+  extractFromNP ((:*) _ rest) = extractFromNP rest
+
+
+withTMVarSafe :: (MonadUnliftIO m) => TMVar a -> (a -> m b) -> m b
 withTMVarSafe m io = do
   a <- liftIO . atomically $ TMVar.takeTMVar m
   b <- onException (io a) (liftIO . atomically $ TMVar.putTMVar m a)
@@ -33,7 +43,7 @@ modifyTMVar m io = do
   liftIO $ atomically $ TMVar.putTMVar m a'
   pure b
 
-modifyTMVarSafe :: (MonadIO m, MonadUnliftIO m) => TMVar a -> (a -> m (a, b)) -> m b
+modifyTMVarSafe :: (MonadUnliftIO m) => TMVar a -> (a -> m (a, b)) -> m b
 modifyTMVarSafe m io = do
   a <- liftIO $ atomically $ TMVar.takeTMVar m
   (a', b) <- onException (io a) (liftIO . atomically $ TMVar.putTMVar m a)

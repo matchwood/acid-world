@@ -70,6 +70,9 @@ instance IxSet.Indexable UserIxs User where
               (IxSet.ixFun $ (:[]) . userCreated )
               (IxSet.ixFun $ (:[]) . userDisabled )
 
+type UserCSIxSet = IxSet.IxSet UserIxs (CValIxs UserIxs User)
+
+
 instance Aeson.ToJSON User
 instance Aeson.FromJSON User
 instance SOP.Generic User
@@ -83,6 +86,17 @@ instance Segment "Users" where
 instance Segment "UsersHM" where
   type SegmentS "UsersHM" = HM.HashMap Int (CVal User)
   defaultState _ = HM.empty
+
+instance SegmentC "UsersHM"
+
+instance Segment "UsersCS" where
+  type SegmentS "UsersCS" = UserCSIxSet
+  defaultState _ = IxSet.empty
+
+instance SegmentC "UsersCS"
+
+instance IxsetPrimaryKeyClass (IxSet.IxSet UserIxs (CValIxs UserIxs User)) where
+  type IxsetPrimaryKey UserCSIxSet = Int
 
 
 insertUser :: (ValidAcidWorldState i ss, HasSegmentAndInvar ss  "Users") => User -> AWUpdate i ss User
@@ -170,6 +184,7 @@ instance Segment "AddressesHM" where
   type SegmentS "AddressesHM" = HM.HashMap Int (CVal Address)
   defaultState _ = HM.empty
 
+instance SegmentC "AddressesHM"
 
 
 insertAddress :: (ValidAcidWorldState i ss, HasSegmentAndInvar ss  "Addresses") => Address -> AWUpdate i ss Address
@@ -244,6 +259,7 @@ instance Segment "PhonenumbersHM" where
   type SegmentS "PhonenumbersHM" = HM.HashMap Int (CVal Phonenumber)
   defaultState _ = HM.empty
 
+instance SegmentC "PhonenumbersHM"
 
 insertPhonenumber :: (ValidAcidWorldState i ss, HasSegmentAndInvar ss  "Phonenumbers") => Phonenumber -> AWUpdate i ss Phonenumber
 insertPhonenumber a = do

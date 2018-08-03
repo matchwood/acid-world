@@ -101,7 +101,7 @@ instance NFData (AcidWorld a n t) where
 
 type AppSegments = '["Users", "Addresses", "Phonenumbers"]
 
-type CAppSegments = '["UsersHM", "AddressesHM", "PhonenumbersHM"]
+type CAppSegments = '["UsersHM", "AddressesHM", "PhonenumbersHM", "UsersCS"]
 
 type AppEvents = '["insertUser", "insertAddress", "insertPhonenumber"]
 
@@ -284,10 +284,13 @@ getAbsDirectoryContentsRecursive dirPath = do
 -}
 
 
-openCacheStateFresh :: IO (Either AWException (CacheState CAppSegments))
-openCacheStateFresh = do
+openCacheStateFresh :: CacheMode -> IO (Either AWException (CacheState CAppSegments))
+openCacheStateFresh cm = do
   t <- mkTempDir
-  openCacheState t
+  openCacheState t cm
+
+runInsertUserHM :: CacheState CAppSegments -> User -> IO ()
+runInsertUserHM cs u = runUpdateCS cs (insertC (Proxy :: Proxy "UsersHM") (userId u) u)
 
 runInsertUserCS :: CacheState CAppSegments -> User -> IO ()
-runInsertUserCS cs u = runUpdateCS cs (insertC (Proxy :: Proxy "UsersHM") (userId u) u)
+runInsertUserCS cs u = runUpdateCS cs (insertC (Proxy :: Proxy "UsersCS") (userId u) u)
