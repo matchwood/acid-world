@@ -467,6 +467,16 @@ unit_insertAndRestoreStateCacheState cm step = runInBoundThread $ do -- closeCac
 
   assertBool "Queried cs list did not match inserted user with list filter" (L.sort (filter (\User{..} -> userId > 250 && userDisabled == False) usCS) == L.sort (IxSet.toList us4CS))
 
+  -- fetch a couple of users
+  step "Lookup a few random users"
+  uIds <- QC.generate . sequence $ replicate 10 (choose (1, 500))
+  mapM_ (testFetchUser cs2 usCS) uIds
+  where
+    testFetchUser :: CacheState CAppSegments -> [User] -> Int -> Assertion
+    testFetchUser cs us i = do
+      u1 <- runQueryCS cs (lookupC (Proxy :: Proxy "UsersCS") i)
+      assertBool ("Fetched user with id " <> show i <> " did not match inserted user") (isJust u1 && u1 == L.find ((==) i . userId) us)
+
 
 -- this isn't really a test at the moment, just a way of manually looking at memory usage
 

@@ -22,6 +22,7 @@ import qualified  Data.Vinyl as V
 import qualified Control.Concurrent.STM.TMVar as  TMVar
 
 import GHC.TypeLits
+import Data.Coerce
 
 import qualified Database.LMDB.Simple.Extra as LMDB
 import Acid.Core.State.Abstract
@@ -43,7 +44,7 @@ data SegmentCacheMode =
   | SegmentCacheModeAll
   deriving (Eq, Show)
 
-class (IsCMap (SegmentS segmentName), Segment segmentName) => SegmentC segmentName where
+class (CacheMap (SegmentS segmentName), Segment segmentName) => SegmentC segmentName where
   segmentCacheMode :: Proxy segmentName -> SegmentCacheMode
   segmentCacheMode _ = SegmentCacheModeGlobal
 
@@ -54,8 +55,8 @@ instance (SegmentC segmentName) => ValidCSegment segmentName
 class (V.KnownField a, SegmentC (V.Fst a), SegmentDb (V.Fst a) ~ (V.Snd a)) => KnownSegmentDBField a
 instance (V.KnownField a, SegmentC (V.Fst a), SegmentDb (V.Fst a) ~ (V.Snd a)) => KnownSegmentDBField a
 
-class (IsCMap (V.Snd sf), SegmentC (V.Fst sf), KnownSymbol (V.Fst sf),  SegmentFetching ss sf) => ValidCSegmentField ss sf
-instance (IsCMap (V.Snd sf), SegmentC (V.Fst sf), KnownSymbol (V.Fst sf),  SegmentFetching ss sf) => ValidCSegmentField ss sf
+class (CacheMap (V.Snd sf), SegmentC (V.Fst sf), KnownSymbol (V.Fst sf),  SegmentFetching ss sf) => ValidCSegmentField ss sf
+instance (CacheMap (V.Snd sf), SegmentC (V.Fst sf), KnownSymbol (V.Fst sf),  SegmentFetching ss sf) => ValidCSegmentField ss sf
 
 class (KnownSegmentDBField sf, ValidCSegment (V.Fst sf)) => ValidDBSegmentField ss sf
 instance (KnownSegmentDBField sf, ValidCSegment (V.Fst sf)) => ValidDBSegmentField ss sf
@@ -93,7 +94,7 @@ npToSegmentsDb np = SegmentsDb $ (npToVinylARec id np)
 
 
 
-class (Serialise (CDBMapKey a), Serialise (CDBMapValue a)) => IsCMap a where
+class (Serialise (CDBMapKey a), Serialise (CDBMapValue a)) => CacheMap a where
   type CMapKey a
   type CMapValue a
   type CMapExpanded a
@@ -104,6 +105,7 @@ class (Serialise (CDBMapKey a), Serialise (CDBMapValue a)) => IsCMap a where
   insertMapC :: CacheMode -> CMapKey a ->  CMapValue a -> Database (CDBMapKey a) (CDBMapValue a) -> a -> Transaction ReadWrite (a)
   expandMap ::  Database (CDBMapKey a) (CDBMapValue a) -> a -> Transaction ReadOnly (CMapExpanded a)
   restoreMapC :: CacheMode -> Database (CDBMapKey a) (CDBMapValue a) -> Transaction ReadOnly a
+  lookupMapC :: CMapKey a -> Database (CDBMapKey a) (CDBMapValue a) -> a -> Transaction ReadOnly (Maybe (CMapValue a))
 
 {- cacheable hashmaps -}
 
@@ -111,24 +113,15 @@ data CVal a =
     CVal !a
   | CValRef
 
-instance (Serialise k, Serialise v, Eq k, Hashable k) => IsCMap (HM.HashMap k (CVal v)) where
+instance (Serialise k, Serialise v, Eq k, Hashable k) => CacheMap (HM.HashMap k (CVal v)) where
   type CMapKey (HM.HashMap k (CVal v)) = k
   type CMapValue (HM.HashMap k (CVal v)) = v
   type CMapExpanded (HM.HashMap k (CVal v)) = HM.HashMap k v
   insertMapC cm k v db hm = do
     put db k (Just v)
     let !cval = toCachedCVal cm v
-
     pure $ HM.insert k cval hm
-  expandMap db hm = sequence $ HM.mapWithKey expandVal hm
-    where
-      expandVal :: k -> (CVal v) -> Transaction ReadOnly v
-      expandVal _  (CVal a) = pure a
-      expandVal k CValRef = do
-        mV <- get db k
-        case mV of
-          Nothing -> throwIO $ AWExceptionSegmentDeserialisationError "Database did not contain value for key"
-          Just v -> pure v
+  expandMap db hm = sequence $ HM.mapWithKey (expandCVal db) hm
   restoreMapC cm db =
     case cm of
       CacheModeNone -> do
@@ -137,10 +130,19 @@ instance (Serialise k, Serialise v, Eq k, Hashable k) => IsCMap (HM.HashMap k (C
       CacheModeAll -> do
         kvs <- LMDB.toList db
         pure $ HM.fromList $ (map (\(k,v) -> (k, CVal v))) kvs
+  lookupMapC k db hm = maybe (pure Nothing) (fmap Just . expandCVal db k) (HM.lookup k hm)
 
 toCachedCVal :: CacheMode -> v -> CVal v
 toCachedCVal CacheModeAll v = CVal v
 toCachedCVal CacheModeNone _ = CValRef
+
+expandCVal :: (Serialise k, Serialise v) => Database k v -> k -> (CVal v) -> Transaction ReadOnly v
+expandCVal _ _  (CVal a) = pure a
+expandCVal db k CValRef = do
+  mV <- get db k
+  case mV of
+    Nothing -> throwIO $ AWExceptionSegmentDeserialisationError "Database did not contain value for key"
+    Just v -> pure v
 
 
 {- cacheable IxSets -}
@@ -233,7 +235,7 @@ indexableToIndexes a = buildNp IxSet.indices a
     buildNp IxSet.Nil _ = Nil
     buildNp ((IxSet.:::) (IxSet.Ix _ f) ilist) aa = f aa :* (buildNp ilist aa)
 
-instance (CIndexable ixs v, All Serialise ixs, Serialise (IxsetPrimaryKey (IxSet.IxSet ixs (CValIxs ixs v))), Serialise v) => IsCMap (IxSet.IxSet ixs (CValIxs ixs v)) where
+instance (CIndexable ixs v, All Serialise ixs, Serialise (IxsetPrimaryKey (IxSet.IxSet ixs (CValIxs ixs v))), Serialise v) => CacheMap (IxSet.IxSet ixs (CValIxs ixs v)) where
   type CMapKey (IxSet.IxSet ixs (CValIxs ixs v)) = IxsetPrimaryKey (IxSet.IxSet ixs (CValIxs ixs v))
   type CMapValue (IxSet.IxSet ixs (CValIxs ixs v)) = v
   type CDBMapKey (IxSet.IxSet ixs (CValIxs ixs v)) = ByteString
@@ -274,27 +276,30 @@ instance (CIndexable ixs v, All Serialise ixs, Serialise (IxsetPrimaryKey (IxSet
           Right np -> pure $ CValIxsRef np
 
   expandMap db ixset = do
-    expanded <- mapM expandVal $ IxSet.toList ixset
+    expanded <- mapM (expandCValIxs db) $ IxSet.toList ixset
     pure $ IxSet.fromList expanded
     where
-      expandVal :: (CValIxs ixs v) -> Transaction ReadOnly v
-      expandVal (CValIxs a) = pure a
-      expandVal cValIx@(CValIxsRef _) = do
-        case getPrimaryKey cValIx of
-          Left err -> throwIO $ AWExceptionSegmentDeserialisationError ("CValIxsRef did not contain primary key: " <> err)
-          Right pk -> do
-            mBs <- get db (BL.toStrict . serialise $ pk)
-            case mBs of
-              Nothing -> throwIO $ AWExceptionSegmentDeserialisationError "Database did not contain value for key"
-              Just bs -> do
-                case deserialiseOrFail (BL.fromStrict bs) of
-                  Left err -> throwIO $ AWExceptionSegmentDeserialisationError ("Could not deserialise when expanding: " <> showT err)
-                  Right v -> pure v
+
+
+  lookupMapC k db ixset = maybe (pure Nothing) (fmap Just . expandCValIxs db) (IxSet.getOne $ IxSet.getEQ k ixset)
 
 toCachedCValIxs :: CacheMode -> v -> NP [] ixs -> CValIxs ixs v
 toCachedCValIxs CacheModeAll !v _ = CValIxs v
 toCachedCValIxs CacheModeNone _ !ixs = CValIxsRef ixs
 
+expandCValIxs :: (GetPrimaryKey ixs v, Serialise (IxsetPrimaryKeyT ixs v), Serialise v) => Database ByteString ByteString -> (CValIxs ixs v) -> Transaction ReadOnly v
+expandCValIxs _ (CValIxs a) = pure a
+expandCValIxs db cValIx@(CValIxsRef _) = do
+  case getPrimaryKey cValIx of
+    Left err -> throwIO $ AWExceptionSegmentDeserialisationError ("CValIxsRef did not contain primary key: " <> err)
+    Right pk -> do
+      mBs <- get db (BL.toStrict . serialise $ pk)
+      case mBs of
+        Nothing -> throwIO $ AWExceptionSegmentDeserialisationError "Database did not contain value for key"
+        Just bs -> do
+          case deserialiseOrFail (BL.fromStrict bs) of
+            Left err -> throwIO $ AWExceptionSegmentDeserialisationError ("Could not deserialise when expanding: " <> showT err)
+            Right v -> pure v
 
 
 {- the cache state itself-}
@@ -403,7 +408,11 @@ insertManyC ps vs = do
   putSegmentC ps newSeg
 
 
-
+lookupC :: (ValidCSegment segmentName, HasSegment ss segmentName, HasSegmentDb ss segmentName) => Proxy segmentName -> CMapKey (SegmentS segmentName) -> CQuery ss (Maybe (CMapValue (SegmentS segmentName)))
+lookupC ps k = do
+  (_, db) <- fmap segmentDbDatabase $ askSegmentDb ps
+  seg <- askSegmentC ps
+  CQuery . lift  $ lookupMapC k db seg
 
 getCacheModePure :: (SegmentC segmentName) => CacheMode -> Proxy segmentName -> CacheMode
 getCacheModePure gcm ps =
@@ -426,6 +435,13 @@ fetchMapCWith ps f = do
   CQuery . lift  $ expandMap db (f seg)
 
 
+liftQueryCS :: CQuery ss a -> CUpdate ss a
+liftQueryCS cq = do
+  segs <- CUpdate St.get
+  (dbs, _) <- CUpdate ask
+  let roTrans = Re.runReaderT (extractCQuery cq) (dbs, segs)
+  -- we are coercing from a ReadOnly to a ReadWrite transaction - this should be fine, because any ReadOnly transaction can also be run in a ReadWrite environment
+  CUpdate . lift . lift $ coerce roTrans
 
 runUpdateCS :: (MonadUnliftIO m) => CacheState ss -> CUpdate ss a ->  m a
 runUpdateCS cs act =
