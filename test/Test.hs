@@ -20,10 +20,14 @@ import qualified Data.IxSet.Typed as IxSet
 import qualified Test.QuickCheck as QC
 import qualified Test.QuickCheck.Property as QCP
 import Control.Concurrent
+import GHC.Stats
+import System.Mem
+import Control.DeepSeq
+import Text.Printf
+import qualified RIO.List.Partial as L.Partial
 
 import Acid.Core.State.CacheState
-
-
+import Prelude(putStrLn)
 
 withBackends :: (AppValidBackend -> AppValidSerialiser -> [TestTree]) -> [(AppValidBackend, [AppValidSerialiser])] -> [TestTree]
 withBackends f os =
@@ -43,7 +47,6 @@ backendsWithAllSerialisers bs = backendsWithSerialisers bs allSerialisers
 
 main :: IO ()
 main = do
-  --testCheckSum
   defaultMain tests
 
 tests :: TestTree
@@ -54,7 +57,9 @@ tests = testGroup "Tests" $
   withBackends persistentBackendConstraintTests (backendsWithSerialisers persistentBackends [defaultAppSerialiser]) ++
   fsSpecificTests (\t -> AWBConfigFS t True) defaultAppSerialiser ++
   [postgresSpecificTests] ++
-  [cacheStateSpecificTests [CacheModeNone, CacheModeAll]]
+  [cacheStateSpecificTests [CacheModeNone, CacheModeAll],
+    testCaseSteps "cacheMemoryUsage" (unit_cacheMemoryUsage)
+  ]
 
 
 
@@ -416,19 +421,22 @@ unit_insertAndRestoreStateCacheState cm step = runInBoundThread $ do -- closeCac
   step "Opening cache state"
   cs <- throwEither $ openCacheStateFresh cm
   us <- QC.generate $ generateUsers 500
+  ps <- QC.generate $ generatePhonenumbers 500
+
   usCS <- QC.generate $ generateUsers 500
-  step "Insert users into HM"
+  step "Insert recs into HM"
   runUpdateCS cs (insertManyC (Proxy :: Proxy "UsersHM") $ map (\u -> (userId u, u)) us)
-  --mapM_ (runInsertUserHM cs) us
+  runUpdateCS cs (insertManyC (Proxy :: Proxy "PhonenumbersHM") $ map (\p -> (phonenumberId p, p)) ps)
 
   step "Insert users into CS"
   runUpdateCS cs (insertManyC (Proxy :: Proxy "UsersCS") $ map (\u -> (userId u, u)) usCS)
-  --mapM_ (runInsertUserCS cs) usCS
 
   step "Fetch users"
   us2 <- runQueryCS cs (fetchMapC (Proxy :: Proxy "UsersHM"))
+  ps2 <- runQueryCS cs (fetchMapC (Proxy :: Proxy "PhonenumbersHM"))
   us2CS <- runQueryCS cs (fetchMapC (Proxy :: Proxy "UsersCS"))
   assertBool "Fetched hm user list did not match inserted user list" (L.sort us == L.sort (HM.elems us2))
+  assertBool "Fetched hm pn list did not match inserted pn list" (L.sort ps == L.sort (HM.elems ps2))
   assertBool "Fetched cs user list did not match inserted user list" (L.sort usCS == L.sort (IxSet.toList us2CS))
   step "Close cache state"
   closeCacheState cs
@@ -436,8 +444,10 @@ unit_insertAndRestoreStateCacheState cm step = runInBoundThread $ do -- closeCac
   step "Reopen cache state"
   cs2 <- throwEither $ reopenCacheState cs
   us3 <- runQueryCS cs2 (fetchMapC (Proxy :: Proxy "UsersHM"))
+  ps3 <- runQueryCS cs2 (fetchMapC (Proxy :: Proxy "PhonenumbersHM"))
   us3CS <- runQueryCS cs2 (fetchMapC (Proxy :: Proxy "UsersCS"))
   assertBool "Fetched hm user list after restore did not match inserted user list" (L.sort us == L.sort (HM.elems us3))
+  assertBool "Fetched pn user list after restore did not match inserted pn list" (L.sort ps == L.sort (HM.elems ps3))
   assertBool "Fetched cs user list after restore did not match inserted user list" (L.sort usCS == L.sort (IxSet.toList us3CS))
   step "Fetch users with idx query"
 
@@ -446,10 +456,52 @@ unit_insertAndRestoreStateCacheState cm step = runInBoundThread $ do -- closeCac
   assertBool "Queried cs list did not match inserted user with list filter" (L.sort (filter (\User{..} -> userId > 250 && userDisabled == False) usCS) == L.sort (IxSet.toList us4CS))
 
 
+-- this isn't really a test at the moment, just a way of manually looking at memory usage
+
+-- ./runTest.sh -p '$0 ~ /cacheMemoryUsage/' +RTS -T -RTS
+unit_cacheMemoryUsage :: (String -> IO ()) -> Assertion
+unit_cacheMemoryUsage step = do
+  en <- getRTSStatsEnabled
+  if en
+    then do
+      step "Insert users into CS"
+      runInBoundThread $ insertManyUsersCS step CacheModeAll
+    else do
+      step "RTS stats not enabled"
+
+
+insertManyUsersCS :: (String -> IO ()) -> CacheMode -> IO ()
+insertManyUsersCS step cm = do
+  us <- fmap force $ QC.generate $ generateUsers (100000)
+  cs <- throwEither $ openCacheStateFresh cm
+  runUpdateCS cs (insertManyC (Proxy :: Proxy "UsersCS") $ map (\u -> (userId u, u)) us)
+  --cs2 <- throwEither $ reopenCacheState cs
+  let cs2 = cs
+  performGC
+  stats1 <- getRTSStats
+  step $ "Current memory usage: " <> formatMem (gcdetails_mem_in_use_bytes . gc $ stats1)
+  hm <- runQueryCS cs2 (fetchMapCWith (Proxy :: Proxy "UsersCS") (IxSet.getLT (0 :: Int)))
+  step $ "hm has n without keys" <> show (IxSet.size hm)
+
+  --hm <- runQueryCS cs2 (fetchMapCWith (Proxy :: Proxy "UsersHM") (HM.filterWithKey (\k _ -> k < 0)))
+  --step $ "hm has n without keys" <> show (HM.size hm)
 
 
 
 
+formatMem :: Word64 -> String
+formatMem = humanReadableBytes . fromIntegral
+
+humanReadableBytes :: Integer -> String
+humanReadableBytes size | null pairs = printf "%.0fZiB" (size'/1024^(7 :: Integer))
+                            | otherwise  = if unit=="" then printf "%dB" size
+                                           else printf "%.1f%sB" n unit
+    where
+        (n, unit) = L.Partial.head pairs
+        pairs = dropWhile ((1024<).abs.fst)
+             (zip (map ((size'/).(1024^)) ([0..] :: [Integer])) units) :: [(Double, String)]
+        size' = fromIntegral size
+        units = ["","Ki","Mi","Gi","Ti","Pi","Ei","Zi"]
 
 
 

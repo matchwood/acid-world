@@ -5,6 +5,7 @@ module Shared.Schema where
 
 import RIO
 import qualified RIO.HashMap as HM
+import qualified RIO.Text as T
 
 import qualified RIO.Time as Time
 
@@ -15,6 +16,7 @@ import Test.QuickCheck as QC
 import qualified Generics.SOP as SOP
 import qualified Generics.SOP.Arbitrary as SOP
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Types as Aeson
 import qualified Data.IxSet.Typed as IxSet
 import Acid.World
 import Codec.Serialise
@@ -22,6 +24,8 @@ import Data.SafeCopy
 import Acid.Core.State.CacheState
 
 import qualified Database.PostgreSQL.Simple.ToRow as PSQL
+import qualified Database.PostgreSQL.Simple.ToField as PSQL
+import qualified Database.PostgreSQL.Simple.FromField as PSQL
 
 instance (Serialise b, IxSet.Indexable a b) => Serialise (IxSet.IxSet a b) where
   encode = encode . IxSet.toList
@@ -38,14 +42,26 @@ data User = User  {
   userId :: !Int,
   userFirstName :: !Text,
   userLastName :: !Text,
+  userComments :: [Text],
+  userOtherInformation :: Text,
   userCreated :: !(Maybe Time.UTCTime),
   userDisabled :: !Bool
 } deriving (Eq, Show, Generic, Ord)
 
+instance PSQL.ToField [Text] where
+  toField = PSQL.toField . Aeson.toJSON
+
+instance PSQL.FromField [Text] where
+  fromField f bs = do
+   v <- PSQL.fromField f bs
+   case Aeson.parseEither Aeson.parseJSON v of
+    Left err -> PSQL.conversionError $ AWExceptionEventDeserialisationError (T.pack err)
+    Right ts -> pure ts
+
 instance PSQL.ToRow User
 instance (IxSet.Indexable a User) => AcidSerialisePostgres (IxSet.IxSet a User) where
   toPostgresRows a = map PostgresRow (IxSet.toList a)
-  createTable _ = mconcat ["CREATE TABLE ", fromString (tableName (Proxy :: Proxy "Users")) ," (userId integer NOT NULL, userFirstName Text NOT NULL, userLastName Text NOT NULL,  userCreated timestamptz, userDisabled bool);"]
+  createTable _ = mconcat ["CREATE TABLE ", fromString (tableName (Proxy :: Proxy "Users")) ," (userId integer NOT NULL, userFirstName Text NOT NULL, userLastName Text NOT NULL, userComments Text NOT NULL, userOtherInformation Text NOT NULL, userCreated timestamptz, userDisabled bool);"]
   fromPostgresConduitT ts = fmap IxSet.fromList $ sequence $ map fromFields ts
 
 
@@ -54,8 +70,10 @@ instance FromFields User where
     userId <- fromIdx fs 0
     userFirstName <- fromIdx fs 1
     userLastName <- fromIdx fs 2
-    userCreated <- fromIdx fs 3
-    userDisabled <- fromIdx fs 4
+    userComments <- fromIdx fs 3
+    userOtherInformation <- fromIdx fs 4
+    userCreated <- fromIdx fs 5
+    userDisabled <- fromIdx fs 6
     pure $ User{..}
 
 
@@ -137,6 +155,8 @@ generateUsers :: Int -> Gen [User]
 generateUsers i = do
   us <- sequence $ replicate i (arbitrary)
   pure $ map (\(u, uid) -> u{userId = uid}) $ zip us [1..]
+
+
 
 
 data Address = Address  {

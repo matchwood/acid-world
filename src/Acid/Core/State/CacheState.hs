@@ -108,7 +108,7 @@ class (Serialise (CDBMapKey a), Serialise (CDBMapValue a)) => IsCMap a where
 {- cacheable hashmaps -}
 
 data CVal a =
-    CVal a
+    CVal !a
   | CValRef
 
 instance (Serialise k, Serialise v, Eq k, Hashable k) => IsCMap (HM.HashMap k (CVal v)) where
@@ -117,7 +117,9 @@ instance (Serialise k, Serialise v, Eq k, Hashable k) => IsCMap (HM.HashMap k (C
   type CMapExpanded (HM.HashMap k (CVal v)) = HM.HashMap k v
   insertMapC cm k v db hm = do
     put db k (Just v)
-    pure $ HM.insert k (toCachedCVal cm v) hm
+    let !cval = toCachedCVal cm v
+
+    pure $ HM.insert k cval hm
   expandMap db hm = sequence $ HM.mapWithKey expandVal hm
     where
       expandVal :: k -> (CVal v) -> Transaction ReadOnly v
@@ -147,21 +149,37 @@ toCachedCVal CacheModeNone _ = CValRef
 class IxsetPrimaryKeyClass a where
   type IxsetPrimaryKey a
 
+type IxsetPrimaryKeyT ixs v = IxsetPrimaryKey (IxSet.IxSet ixs (CValIxs ixs v))
+
+type GetPrimaryKey ixs v = (
+    IxSet.Indexable ixs v,
+    ExtractFromNP ixs (IxsetPrimaryKeyT ixs v),
+    IxSet.IsIndexOf (IxsetPrimaryKeyT ixs v) ixs
+  )
+
+getPrimaryKey :: forall ixs v. (GetPrimaryKey ixs v) => CValIxs ixs v -> Either Text (IxsetPrimaryKeyT ixs v)
+getPrimaryKey (CValIxs v) =
+  let (IxSet.Ix _ f) = IxSet.access (IxSet.indices :: IxSet.IxList ixs v)
+  in case f v of
+    [ix] -> Right ix
+    [] -> Left "Expected single primary key, got none"
+    _ -> Left "Expected single primary key, got more than one"
+getPrimaryKey (CValIxsRef np) =
+  case extractFromNP np of
+    [ix] -> Right ix
+    [] -> Left "Expected single primary key, got none"
+    _ -> Left "Expected single primary key, got more than one"
+
 data CValIxs ixs a =
-    CValIxs ByteString a
+    CValIxs !a
     -- for performance reasons it would be better to use a V.ARec here maybe (but with what keys...?)
-  | CValIxsRef ByteString (NP [] ixs)
+  | CValIxsRef !(NP [] ixs)
 
-pKeyFromCValIxs :: CValIxs ixs a -> ByteString
-pKeyFromCValIxs (CValIxs bs _) = bs
-pKeyFromCValIxs (CValIxsRef bs _) = bs
+instance (GetPrimaryKey ixs a) => Eq (CValIxs ixs a) where
+  (==) = (==) `on` getPrimaryKey
 
-instance Eq (CValIxs ixs a) where
-  (==) = (==) `on` pKeyFromCValIxs
-
-
-instance Ord (CValIxs ixs a) where
-  compare = compare `on` pKeyFromCValIxs
+instance (GetPrimaryKey ixs a) => Ord (CValIxs ixs a) where
+  compare = compare `on` getPrimaryKey
 
 instance (All Serialise xs) => Serialise (NP [] xs) where
   encode np = encodeListLenIndef <>
@@ -187,7 +205,8 @@ npListFromCBOR =
 
 
 type CIndexable ixs a = (
-  IxSet.Indexable ixs a, All Ord ixs, All (ExtractFromNP ixs) ixs
+  IxSet.Indexable ixs a, All Ord ixs, All (ExtractFromNP ixs) ixs,
+  GetPrimaryKey ixs a
 
   )
 
@@ -199,8 +218,8 @@ transformIndices IxSet.Nil = IxSet.Nil
 transformIndices ((IxSet.:::) ix ilist) = IxSet.ixFun (wrappedIxFun ix) IxSet.::: transformIndices ilist
   where
     wrappedIxFun :: (ExtractFromNP es ix) => IxSet.Ix ix a -> CValIxs es a -> [ix]
-    wrappedIxFun (IxSet.Ix _ f) (CValIxs _ a) = f a
-    wrappedIxFun _ (CValIxsRef _ np) = extractFromNP np
+    wrappedIxFun (IxSet.Ix _ f) (CValIxs a) = f a
+    wrappedIxFun _ (CValIxsRef np) = extractFromNP np
 
 
 ixsetIdxsKeyPrefix :: ByteString
@@ -214,7 +233,7 @@ indexableToIndexes a = buildNp IxSet.indices a
     buildNp IxSet.Nil _ = Nil
     buildNp ((IxSet.:::) (IxSet.Ix _ f) ilist) aa = f aa :* (buildNp ilist aa)
 
-instance (CIndexable ixs v, All Serialise ixs, IxSet.IsIndexOf (IxsetPrimaryKey (IxSet.IxSet ixs (CValIxs ixs v))) ixs, Serialise (IxsetPrimaryKey (IxSet.IxSet ixs (CValIxs ixs v))), Serialise v) => IsCMap (IxSet.IxSet ixs (CValIxs ixs v)) where
+instance (CIndexable ixs v, All Serialise ixs, Serialise (IxsetPrimaryKey (IxSet.IxSet ixs (CValIxs ixs v))), Serialise v) => IsCMap (IxSet.IxSet ixs (CValIxs ixs v)) where
   type CMapKey (IxSet.IxSet ixs (CValIxs ixs v)) = IxsetPrimaryKey (IxSet.IxSet ixs (CValIxs ixs v))
   type CMapValue (IxSet.IxSet ixs (CValIxs ixs v)) = v
   type CDBMapKey (IxSet.IxSet ixs (CValIxs ixs v)) = ByteString
@@ -223,16 +242,17 @@ instance (CIndexable ixs v, All Serialise ixs, IxSet.IsIndexOf (IxsetPrimaryKey 
   insertMapC cm k v db ixset = do
     let pKey = BL.toStrict $ serialise k
     put db pKey (Just (BL.toStrict $ serialise v))
-    let inds = indexableToIndexes v :: NP [] ixs
+    let !inds = indexableToIndexes v :: NP [] ixs
+        !cval = toCachedCValIxs cm v inds
     put db (ixsetIdxsKeyPrefix <> pKey) (Just (BL.toStrict . serialise $ inds))
-    pure $ IxSet.updateIx k (toCachedCValIxs cm pKey v inds) ixset
+    pure $ IxSet.updateIx k cval ixset
   restoreMapC cm db =
     case cm of
       CacheModeNone -> do
-        ks <- LMDB.keys db
+        kvs <- LMDB.toList db
         -- restrict to index keys
-        let idxKeys = filter (BS.isPrefixOf ixsetIdxsKeyPrefix) ks
-        vs <- mapM deserialiseIxRef idxKeys
+        let kvsr = filter (BS.isPrefixOf ixsetIdxsKeyPrefix . fst) kvs
+        vs <- mapM deserialiseIxRef kvsr
         pure $ IxSet.fromList vs
       CacheModeAll -> do
         kvs <- LMDB.toList db
@@ -242,39 +262,38 @@ instance (CIndexable ixs v, All Serialise ixs, IxSet.IsIndexOf (IxsetPrimaryKey 
         pure $ IxSet.fromList vs
     where
       deserialiseIxVal :: (ByteString, ByteString) -> Transaction ReadOnly (CValIxs ixs v)
-      deserialiseIxVal (bs, bsV) = do
+      deserialiseIxVal (_, bsV) = do
         case deserialiseOrFail (BL.fromStrict bsV) of
           Left err -> throwIO $ AWExceptionSegmentDeserialisationError ("Could not deserialise value: " <> showT err)
-          Right v -> pure $ CValIxs bs v
+          Right v -> pure $ CValIxs v
 
-      deserialiseIxRef :: ByteString -> Transaction ReadOnly (CValIxs ixs v)
-      deserialiseIxRef k = do
-        mIndexesBS <- get db k
-        case mIndexesBS of
-          Nothing -> throwIO $ AWExceptionSegmentDeserialisationError "Database did not contain value for idx key"
-          Just bs -> do
-            case deserialiseOrFail (BL.fromStrict bs) of
-              Left err -> throwIO $ AWExceptionSegmentDeserialisationError ("Could not deserialise indexes: " <> showT err)
-              Right np -> pure $ CValIxsRef (BS.drop (BS.length ixsetIdxsKeyPrefix) k) np
+      deserialiseIxRef :: (ByteString, ByteString) -> Transaction ReadOnly (CValIxs ixs v)
+      deserialiseIxRef  (_, bsV) = do
+        case deserialiseOrFail (BL.fromStrict bsV) of
+          Left err -> throwIO $ AWExceptionSegmentDeserialisationError ("Could not deserialise indexes: " <> showT err)
+          Right np -> pure $ CValIxsRef np
 
   expandMap db ixset = do
     expanded <- mapM expandVal $ IxSet.toList ixset
     pure $ IxSet.fromList expanded
     where
       expandVal :: (CValIxs ixs v) -> Transaction ReadOnly v
-      expandVal (CValIxs _ a) = pure a
-      expandVal (CValIxsRef k _) = do
-        mBs <- get db k
-        case mBs of
-          Nothing -> throwIO $ AWExceptionSegmentDeserialisationError "Database did not contain value for key"
-          Just bs -> do
-            case deserialiseOrFail (BL.fromStrict bs) of
-              Left err -> throwIO $ AWExceptionSegmentDeserialisationError ("Could not deserialise when expanding: " <> showT err)
-              Right v -> pure v
+      expandVal (CValIxs a) = pure a
+      expandVal cValIx@(CValIxsRef _) = do
+        case getPrimaryKey cValIx of
+          Left err -> throwIO $ AWExceptionSegmentDeserialisationError ("CValIxsRef did not contain primary key: " <> err)
+          Right pk -> do
+            mBs <- get db (BL.toStrict . serialise $ pk)
+            case mBs of
+              Nothing -> throwIO $ AWExceptionSegmentDeserialisationError "Database did not contain value for key"
+              Just bs -> do
+                case deserialiseOrFail (BL.fromStrict bs) of
+                  Left err -> throwIO $ AWExceptionSegmentDeserialisationError ("Could not deserialise when expanding: " <> showT err)
+                  Right v -> pure v
 
-toCachedCValIxs :: CacheMode -> ByteString -> v -> NP [] ixs -> CValIxs ixs v
-toCachedCValIxs CacheModeAll bs v _ = CValIxs bs v
-toCachedCValIxs CacheModeNone bs _ ixs = CValIxsRef bs ixs
+toCachedCValIxs :: CacheMode -> v -> NP [] ixs -> CValIxs ixs v
+toCachedCValIxs CacheModeAll !v _ = CValIxs v
+toCachedCValIxs CacheModeNone _ !ixs = CValIxsRef ixs
 
 
 
@@ -307,7 +326,7 @@ closeCacheState :: (MonadUnliftIO m) => CacheState ss -> m ()
 closeCacheState cs = do
   (a, env, b) <- liftIO $ atomically $ TMVar.takeTMVar (cacheState cs)
   onException (liftIO $ closeEnvironment env) (liftIO . atomically $ TMVar.putTMVar (cacheState cs) (a, env, b))
-  liftIO $ atomically $ TMVar.putTMVar (cacheState cs) (a, error "Environment has been closed", b)
+  liftIO $ atomically $ TMVar.putTMVar (cacheState cs) (error "Environment has been closed", error "Environment has been closed", error "Environment has been closed")
 
 
 reopenCacheState :: (ValidSegmentsCacheState ss, MonadIO m) => CacheState ss -> m (Either AWException (CacheState ss))

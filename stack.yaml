@@ -10,6 +10,6 @@ extra-deps:
 - cborg-0.2.0.0
 - crc-0.1.0.0
 - git: git@github.com:matchwood/ixset-typed.git
-  commit: 15ddd9eb9a7811c0a1797201de4e52f2ad8dc259
+  commit: 60b62d73d189b5ab2cd417fbaf517029111bb4eb
 - git: git@github.com:matchwood/lmdb-simple.git
   commit: 637f702aae298ce8000dacb3a1b5e3ac7b0a2664

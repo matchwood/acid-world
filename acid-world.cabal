@@ -153,6 +153,7 @@ test-suite acid-world-test
                      , postgresql-simple
                      , uuid
                      , postgresql-libpq
+                     , deepseq
 
   default-language:    Haskell2010
   default-extensions:  AutoDeriveTypeable
