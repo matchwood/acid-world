@@ -1,12 +1,17 @@
 name:                acid-world
 version:             0.0.0.1
-synopsis:            Acid world
-description:         Please see README.md
+synopsis:            Expansion of acid state to cover multiple serialisers, multiple state objects and other useful functionality
+description:
+    This package expands on the functionality of <https://hackage.haskell.org/package/acid-state acid-state>
+    by providing multiple serialisation options, the ability to define multiple root states, an easier, TH-free interface, composable update events and other usability improvements.
+    .
+    Also included in this package is a key-value backed persistence layer for keyed maps, including indexed maps (eg <https://hackage.haskell.org/package/ixset-typed ixset-typed>). The motivation for this is similar to that behind <https://hackage.haskell.org/package/vcache vcache> - easy persistence and querying of state that is too large to fit in memory. The implementation in this package is not as general as that in vcache, but is hopefully easier to work with for some use cases.
+
 homepage:            http://github.com/matchwood/acid-world#readme
-license:             AllRightsReserved
+license:             BSD3
+license-file:        LICENSE
 author:              Matchwood
 maintainer:          matchwood1@gmail.com
-copyright:           2018 Matchwood
 category:            Database
 build-type:          Simple
 cabal-version:       >= 1.24
