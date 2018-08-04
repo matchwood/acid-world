@@ -61,7 +61,7 @@ instance PSQL.FromField [Text] where
 instance PSQL.ToRow User
 instance (IxSet.Indexable a User) => AcidSerialisePostgres (IxSet.IxSet a User) where
   toPostgresRows a = map PostgresRow (IxSet.toList a)
-  createTable _ = mconcat ["CREATE TABLE ", fromString (tableName (Proxy :: Proxy "Users")) ," (userId integer NOT NULL, userFirstName Text NOT NULL, userLastName Text NOT NULL, userComments Text NOT NULL, userOtherInformation Text NOT NULL, userCreated timestamptz, userDisabled bool);"]
+  createTable _ = mconcat ["CREATE TABLE ", fromString (tableName (Proxy :: Proxy "Users")) ," (userId integer NOT NULL, userFirstName Text NOT NULL, userLastName Text NOT NULL, userComments json NOT NULL, userOtherInformation Text NOT NULL, userCreated timestamptz, userDisabled bool);"]
   fromPostgresConduitT ts = fmap IxSet.fromList $ sequence $ map fromFields ts
 
 

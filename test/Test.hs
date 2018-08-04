@@ -22,12 +22,10 @@ import qualified Test.QuickCheck.Property as QCP
 import Control.Concurrent
 import GHC.Stats
 import System.Mem
-import Control.DeepSeq
 import Text.Printf
 import qualified RIO.List.Partial as L.Partial
 
 import Acid.Core.State.CacheState
-import Prelude(putStrLn)
 
 withBackends :: (AppValidBackend -> AppValidSerialiser -> [TestTree]) -> [(AppValidBackend, [AppValidSerialiser])] -> [TestTree]
 withBackends f os =
@@ -382,7 +380,9 @@ unit_insertAndRestoreStatePostgres step = do
 
   step "Inserting records"
   mapM_ (runInsertUser aw) us
+
   usf <- query aw fetchUsers
+
   assertBool "Fetched user list did not match inserted user list" (L.sort us == L.sort usf)
   step "Closing and reopening"
   closeAcidWorld aw
@@ -408,10 +408,22 @@ unit_insertAndRestoreStatePostgres step = do
           (_, _) -> (a, b)
       upairsFixed = map fixPair upairs
       (usFixed, usFixed2) = L.unzip upairsFixed
-  -- sequence $ map (\(a, b) -> when (a /= b) $ traceM ("Hot equal \n" <> showT a <> "\n" <> showT b)) upairsFixed
-  -- this fails when generated texts contains \NUL (see https://github.com/lpsmith/postgresql-simple/issues/223)
-      usFixedFinally = map (\u -> u{userFirstName = T.takeWhile  ((/=) '\NUL') (userFirstName u), userLastName = T.takeWhile  ((/=) '\NUL') (userLastName u)}) usFixed
+  -- fix for when when generated texts contains \NUL (see https://github.com/lpsmith/postgresql-simple/issues/223)
+      usFixedFinally = map fixUser usFixed
+  --void $ sequence $ map (\(a, b) -> when (a /= b) $ traceM ("Hot equal \n" <> showT a <> "\n" <> showT b)) (zip usFixedFinally usFixed2)
+
   assertBool "Fetched user list did not match inserted user list after checkpoint restore" (L.sort usFixedFinally == L.sort usFixed2)
+
+  where
+    fixUser :: User -> User
+    fixUser u = u {
+        userFirstName = fixText (userFirstName u),
+        userLastName = fixText (userLastName u),
+        userOtherInformation = fixText (userOtherInformation u)
+        -- not necessary for userComments because they are stored as json, which doesn't have this problem
+      }
+    fixText :: Text -> Text
+    fixText =  T.takeWhile  ((/=) '\NUL')
 
 
 
