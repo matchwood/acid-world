@@ -1,7 +1,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 
-module Acid.Core.State.CacheState where
+module Acid.Core.CacheState where
 
 import RIO
 import qualified RIO.HashMap as HM
@@ -107,11 +107,50 @@ class (Serialise (CDBMapKey a), Serialise (CDBMapValue a)) => CacheMap a where
   restoreMapC :: CacheMode -> Database (CDBMapKey a) (CDBMapValue a) -> Transaction ReadOnly a
   lookupMapC :: CMapKey a -> Database (CDBMapKey a) (CDBMapValue a) -> a -> Transaction ReadOnly (Maybe (CMapValue a))
 
-{- cacheable hashmaps -}
-
 data CVal a =
     CVal !a
   | CValRef
+
+toCachedCVal :: CacheMode -> v -> CVal v
+toCachedCVal CacheModeAll v = CVal v
+toCachedCVal CacheModeNone _ = CValRef
+
+expandCVal :: (Serialise k, Serialise v) => Database k v -> k -> (CVal v) -> Transaction ReadOnly v
+expandCVal _ _  (CVal a) = pure a
+expandCVal db k CValRef = do
+  mV <- get db k
+  case mV of
+    Nothing -> throwIO $ AWExceptionSegmentDeserialisationError "Database did not contain value for key"
+    Just v -> pure v
+
+{- cacheable single values -}
+
+instance (Serialise a) => CacheMap (I (CVal a)) where
+  type CMapKey (I (CVal a)) = ()
+  type CMapValue (I (CVal a)) = a
+  type CMapExpanded (I (CVal a)) = a
+  type CDBMapKey (I (CVal a)) = ByteString
+
+  insertMapC cm _ v db _ = do
+    put db "key" (Just v)
+    let !cval = toCachedCVal cm v
+    pure $ I cval
+  expandMap db (I cv) = expandCVal db "key" cv
+  restoreMapC cm db =
+    case cm of
+      CacheModeNone -> pure $ I CValRef
+      CacheModeAll -> do
+        vs <- LMDB.elems db
+        -- @todo in the absence of a maintenance db to check on whether this is a restore or an initialisation it is not possible to implement this properly
+        case vs of
+          [v] -> pure . I . CVal $ v
+          _ -> pure . I $ CValRef
+  lookupMapC _ db (I cVal) = fmap Just $ expandCVal db "key" cVal
+
+
+{- cacheable hashmaps -}
+
+
 
 instance (Serialise k, Serialise v, Eq k, Hashable k) => CacheMap (HM.HashMap k (CVal v)) where
   type CMapKey (HM.HashMap k (CVal v)) = k
@@ -132,17 +171,7 @@ instance (Serialise k, Serialise v, Eq k, Hashable k) => CacheMap (HM.HashMap k 
         pure $ HM.fromList $ (map (\(k,v) -> (k, CVal v))) kvs
   lookupMapC k db hm = maybe (pure Nothing) (fmap Just . expandCVal db k) (HM.lookup k hm)
 
-toCachedCVal :: CacheMode -> v -> CVal v
-toCachedCVal CacheModeAll v = CVal v
-toCachedCVal CacheModeNone _ = CValRef
 
-expandCVal :: (Serialise k, Serialise v) => Database k v -> k -> (CVal v) -> Transaction ReadOnly v
-expandCVal _ _  (CVal a) = pure a
-expandCVal db k CValRef = do
-  mV <- get db k
-  case mV of
-    Nothing -> throwIO $ AWExceptionSegmentDeserialisationError "Database did not contain value for key"
-    Just v -> pure v
 
 
 {- cacheable IxSets -}

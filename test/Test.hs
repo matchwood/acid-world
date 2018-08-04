@@ -25,7 +25,7 @@ import System.Mem
 import Text.Printf
 import qualified RIO.List.Partial as L.Partial
 
-import Acid.Core.State.CacheState
+import Acid.Core.CacheState
 
 withBackends :: (AppValidBackend -> AppValidSerialiser -> [TestTree]) -> [(AppValidBackend, [AppValidSerialiser])] -> [TestTree]
 withBackends f os =

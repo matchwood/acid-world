@@ -19,7 +19,7 @@ import Test.QuickCheck as QC
 import qualified System.IO.Temp as Temp
 import qualified  System.FilePath as FilePath
 import Acid.World
-import Acid.Core.State.CacheState
+import Acid.Core.CacheState
 
 import qualified Database.PostgreSQL.Simple as PSQL
 import Shared.Schema

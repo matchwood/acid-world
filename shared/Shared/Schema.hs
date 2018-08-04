@@ -21,7 +21,7 @@ import qualified Data.IxSet.Typed as IxSet
 import Acid.World
 import Codec.Serialise
 import Data.SafeCopy
-import Acid.Core.State.CacheState
+import Acid.Core.CacheState
 
 import qualified Database.PostgreSQL.Simple.ToRow as PSQL
 import qualified Database.PostgreSQL.Simple.ToField as PSQL
