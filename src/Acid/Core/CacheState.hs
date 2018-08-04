@@ -383,7 +383,7 @@ getSegmentDbs cm env = (fmap . fmap) (npToSegmentsDb) segsNpE
     proxyNp = pure_NP Proxy
     getSegmentDbTrans :: ValidCSegment segmentName => Proxy segmentName -> Transaction ReadWrite (Database k v)
     getSegmentDbTrans ps = getDatabase (Just . T.unpack $ toUniqueText ps)
--- note that we are not using the default state for the SegmentS at the moment, because we don't have a way to determine between empty segments and new segments (perhaps we should track this in our own lmdb admin table?)
+-- @todo note that we are not using the default state for the SegmentS at the moment, because we don't have a way to determine between empty segments and new segments (we should track this in our own lmdb admin table)
 restoreSegments :: forall m ss. (MonadIO m, ValidSegmentsCacheState ss) => CacheMode -> Environment ReadWrite -> m (Either AWException (SegmentsState ss))
 restoreSegments cm env = (fmap . fmap) (npToSegmentsState) segsNpE
   where
