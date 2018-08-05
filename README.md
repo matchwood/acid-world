@@ -1,5 +1,5 @@
 ## Acid-world
-[acid-state](https://github.com/acid-state/acid-state) is a great package, but it misses some useful features. Acid-world is a further exploration of the design space in the direction of greater flexibility and usability. Like acid-state, the main persistence model used in acid-world is event logging combined with checkpoints. This package is currently at the proof of concept stage, and is not suitable for use in production.
+[acid-state](https://github.com/acid-state/acid-state) is a great package, but it misses some useful features. Acid-world is a further exploration of the design space in the direction of greater flexibility and usability -(ie a 'world' of different acid 'states'). Like acid-state, the main persistence model used in acid-world is event logging combined with checkpoints. This package is currently at the proof of concept stage, and is not suitable for use in production. 
 
 ### Features vs acid-state
 
@@ -23,7 +23,7 @@ This allows for much better separation of concerns than acid-state, as update an
 It also allows for something that is simply impossible in acid-state - libraries can define state segments and events of their own, and you can add them into your own acid-world. 
 
 #### Multiple serialisation options
-Acid world is structured to allow for multiple possible serialisation strategies and multiple possible backends. Serialisers and backends have to be using the same intermediate types (`ByteString` for example) to be used together. At present the main file system backend can be used with three different serialisers: CBOR, SafeCopy and JSON. The JSON serialiser produces utf-8 encoded files, so you can open them up and edit them by hand if necessary.
+Acid world is structured to allow for multiple possible serialisation strategies and multiple possible backends. Serialisers and backends have to be using the same intermediate types (`ByteString` for example) to be used together. At present the main file system backend can be used with three different serialisers: CBOR, SafeCopy and JSON. The JSON serialiser produces utf-8 encoded files, so you can open them up and edit them by hand if so desired.
 
 #### Composable update events
 Acid state requires every single event to be a unique data type (produced by Template Haskell). Acid world has a single type class for events, and a single container. Instances look like
@@ -63,7 +63,7 @@ After thinking about this a fair amount I'm not sure that any solution can do mu
 Due to the way acid-state deserialises it can sometimes use massive amounts of memory when restoring state. Acid world attempts to avoid this by deserialising in streams (using conduit), and therefore should never use much more memory than the state itself.
 
 #### No Template Haskell
-The most complicated user land class in acid-world is `Eventable`, which is really just a deconstructed function type and constraint. Template Haskell could be used to generate instances of Eventable, but it is not really necessary. Also, acid-world has no equivalent of the `makeAcidic` function - the design does not require a single place where everything is defined, as everything is inferred from the types.
+The most complicated user land class in acid-world is `Eventable`, which is really just a deconstructed function type and constraint. Template Haskell could be used to generate instances of Eventable, but it is not really necessary. Also, acid-world has no equivalent of the `makeAcidic` function - the design does not require a single place where everything is defined, aside from at a type level (acid-world is initialised with type level lists of every event and every segment you want to use).
 
 #### Simpler file structure for persistence
 A simple quality of life improvement - acid-world stores a single events log and single file for each segment in a checkpoint. When a new checkpoint occurs a new, dated, folder is created containing the previous state. So you have something like
@@ -99,5 +99,5 @@ Events have type `Event (n :: Symbol)`. It will be easy enough to provide users 
 
 ### The state of this code
 
-Rather than copying and pasting swathes of acid-state, this package has been pretty much written from scratch. The focus has been on producing a proof of concept, mainly on the type level (handling heteregenous lists with lots of class constraints and type synonyms is a bit finicky). I have therefore not focused much on exception handling / memory usage / performance.
+Rather than copying and pasting swathes of acid-state, this package has been pretty much written from scratch. The focus has been on producing a proof of concept, mainly on the type level (handling heteregenous lists with lots of class constraints and type synonyms is a bit finicky). Not much fine tuning has been done on exception handling / memory usage / performance, but the general structure of the package was designed from the start to put an emphasis on memory usage and performance: "'premature optimization is the root of all evil' is the root of all evil!".
 
