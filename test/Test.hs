@@ -78,6 +78,7 @@ persistentBackendSerialiserTests :: AppValidBackend -> AppValidSerialiser -> [Te
 persistentBackendSerialiserTests (AppValidBackend (bConf :: FilePath -> (AWBConfig b))) (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = [
     testCaseSteps "insertAndRestoreState" $ unit_insertAndRestoreState bConf o,
     testCaseSteps "checkpointAndRestoreState" $ unit_checkpointAndRestoreState bConf o,
+    testCaseSteps "partialCheckpointAndRestore" $ unit_partialCheckpointAndRestore bConf o,
     testCaseSteps "compositionOfEventsState" $ unit_compositionOfEventsState bConf o
 
   ]
@@ -232,9 +233,30 @@ unit_checkpointAndRestoreState b o step = do
     (L.sort (as1 ++ as2) == L.sort asf3)
 
 
+-- we should improve this test to look at partial checkpoints on top of successful ones etc, and for a wide variety of async interruption timings (as exception and failure recovery improves in the code itself)
+unit_partialCheckpointAndRestore :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => (FilePath -> AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
+unit_partialCheckpointAndRestore b o step = do
+  (us1, us2) <- fmap (L.splitAt 500) $ QC.generate $ generateUsers 1000
 
+  step "Opening acid world"
+  aw1 <- openAppAcidWorldFresh b o
+  step "Inserting records"
+  mapM_ (runInsertUser aw1) us1
+  step "Creating checkpoint"
 
+  tId <- forkIO (createCheckpoint aw1)
+  RIO.threadDelay 20 -- the timing here at present has to be while the checkpoint is being written for this test to succeed
+  killThread tId
 
+  step "Inserting more records"
+  mapM_ (runInsertUser aw1) us2
+
+  step "Closing and reopening acid world"
+  closeAcidWorld aw1
+  aw2 <- reopenAcidWorldMiddleware (pure aw1)
+  usf1 <- query aw2 fetchUsers
+  assertBool "Fetched record list did not match inserted records" $
+    (L.sort (us1 ++ us2) == L.sort usf1)
 
 unit_compositionOfEventsState :: forall b s. (AppValidBackendConstraint b, AppValidSerialiserConstraint s)  => (FilePath -> AWBConfig b) -> AcidSerialiseEventOptions s -> (String -> IO ()) -> Assertion
 unit_compositionOfEventsState b o step = do

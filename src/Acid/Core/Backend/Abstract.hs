@@ -31,7 +31,7 @@ class AcidWorldBackend (b :: k) where
   backendConfigInfo :: AWBConfig b -> Text
   default backendConfigInfo :: (Show (AWBConfig b)) => AWBConfig b -> Text
   backendConfigInfo = showT
-  initialiseBackend :: (MonadIO m, AcidSerialiseEvent t) => AWBConfig b -> AcidSerialiseEventOptions t -> m (Either AWException (AWBState b))
+  initialiseBackend :: (MonadUnliftIO m, AcidSerialiseEvent t) => AWBConfig b -> AcidSerialiseEventOptions t -> m (Either AWException (AWBState b))
   closeBackend :: (MonadIO m) => AWBState b -> m ()
   closeBackend _ = pure ()
 

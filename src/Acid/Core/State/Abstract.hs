@@ -37,6 +37,7 @@ data AWException =
   | AWExceptionEventSerialisationError Text
   | AWExceptionEventDeserialisationError Text
   | AWExceptionSegmentDeserialisationError Text
+  | AWExceptionCheckpointError Text
   deriving (Eq, Show, Typeable)
 instance Exception AWException
 

@@ -1,6 +1,6 @@
 ## State folder structure
 
-Inside the state folder there will be one `current` folder, and possible one `previous`. The presence of a `previous` folder indicates that the last attempt at checkpointing did not complete. `acid-world` will automatically sort this out when it is next succesfully started. 
+Inside the state folder there will be one `current` folder, and possibly one `previous`. The presence of a `previous` folder indicates that the last attempt at checkpointing did not complete. `acid-world` will automatically sort this out when it is next succesfully started. 
 
 By default, the `current` (or the `current` + `previous`) folders contain the most recent checkpoint and any events that have been persisted since that checkpoint.
 

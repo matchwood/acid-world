@@ -43,7 +43,7 @@ sha256 :: BL.ByteString -> Hash.Digest Hash.SHA256
 sha256 = Hash.hashlazy
 
 
-
+-- @todo all writing needs to be move to a separate thread
 
 
 instance AcidWorldBackend AcidWorldBackendFS where
@@ -61,6 +61,11 @@ instance AcidWorldBackend AcidWorldBackendFS where
   initialiseBackend c t = do
     stateP <- Dir.makeAbsolute (aWBConfigFSStateDir c)
     let finalConf = c{aWBConfigFSStateDir = stateP}
+
+    -- @todo handle previous folder when restoring after failed checkpoint
+
+    recoverFromPartialCheckpoint finalConf t
+
     -- create an archive directory for later
     hdls <- startOrResumeCurrentEventsLog finalConf t
 
@@ -68,18 +73,34 @@ instance AcidWorldBackend AcidWorldBackendFS where
     pure . pure $ AWBStateFS finalConf hdlV
   createCheckpointBackend s awu t = do
 
+
     let currentS = currentStateFolder (aWBStateFSConfig s)
         previousS = previousStateFolder (aWBStateFSConfig s)
-    -- @todo add some exception handling here and possible recoveries
+
+    -- at present we can only recover from this when initialising
+    whenM (Dir.doesDirectoryExist previousS) $ throwM (AWExceptionCheckpointError "Last checkpoint did not complete, no more checkpoints can be created until that one has been restore, which can be done by closing and reopening acid world")
+
+    -- @todo add some exception handling here and possible recoveries - particularly for when there is already an uncompleted checkpoint!
     -- close the current events log and return current state - as soon as this completes updates can start runnning again
-    sToWrite <- modifyTMVar (aWBStateFSEventsHandle s) $ \(eHdl, cHdl) -> do
+    let restoreCurrent = do
+          whenM (Dir.doesDirectoryExist previousS) $ do
+            Dir.removeDirectoryRecursive currentS
+            Dir.renameDirectory previousS currentS
+          startOrResumeCurrentEventsLog (aWBStateFSConfig s) t
+
+
+    sToWrite <- modifyTMVarWithOnException (aWBStateFSEventsHandle s) restoreCurrent $ \(eHdl, cHdl) -> do
+      st <- runQuery awu askStateNp
+
       liftIO $ hClose eHdl
       liftIO $ hClose cHdl
+
       -- move the current state directory
       Dir.renameDirectory currentS previousS
-      -- state a new log in a new current folder
+
+      -- start a new log in a new current folder
       hdl' <- startOrResumeCurrentEventsLog (aWBStateFSConfig s) t
-      st <- runQuery awu askStateNp
+
       pure (hdl', st)
     writeCheckpoint s t sToWrite
     -- at this point the current state directory contains everything needed, so we can archive the previous state
@@ -173,8 +194,9 @@ startOrResumeCurrentEventsLog c t = do
   let currentS = currentStateFolder c
   Dir.createDirectoryIfMissing True currentS
   Dir.copyFile readmeP (currentS <> "/README.md")
-  let eventPath = makeEventPath c t
-      eventCPath = makeEventsCheckPath c t
+  let eventPath = makeEventPathWith currentS t
+      eventCPath = makeEventsCheckPathWith currentS t
+  -- at the moment this is fragile with respect to exceptions
   eHandle <- liftIO $ openBinaryFile eventPath ReadWriteMode
   cHandle <- liftIO $ openBinaryFile eventCPath ReadWriteMode
   pure (eHandle, cHandle)
@@ -211,6 +233,59 @@ writeSegment middleware s t dir (V.Field seg) = do
     Left err -> throwM $ AWExceptionEventSerialisationError $ prettySegment pp <> "Error when checking segment write: " <> err
     Right (hash, checkHash) -> when (hash /= checkHash) $
         throwM $ AWExceptionEventSerialisationError  $ prettySegment pp <> "Segment check hash did not match written segment file - corruption occurred while writing"
+
+recoverFromPartialCheckpoint :: (MonadUnliftIO m, AcidSerialiseEvent t) => AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> m ()
+recoverFromPartialCheckpoint c t = do
+  -- @todo check that this recovers from all possible states (missing current log etc)
+  let partialN = "/partial"
+      restoreN = "/restore"
+      recoveredN = "/recovered"
+      previousS = previousStateFolder c
+      currentS = currentStateFolder c
+      partialS = previousS <> partialN -- where the old 'current' state lives
+      restoreS = previousS <> restoreN -- for the eventlogs in 'previous'
+
+  whenM (Dir.doesDirectoryExist previousS) $ do
+
+    whenM (Dir.doesDirectoryExist currentS) $ Dir.renameDirectory currentS partialS
+    -- we move the previous logs and check to a temporary folder
+    let previousEventsLogP = makeEventPathWith previousS t
+        previousEventsLogCheckP = makeEventsCheckPathWith previousS t
+        restoreEventsLogP = makeEventPathWith restoreS t
+        restoreEventsLogCheckP = makeEventsCheckPathWith restoreS t
+        partialEventsLogP = makeEventPathWith partialS t
+        partialEventsLogCheckP = makeEventsCheckPathWith partialS t
+
+    Dir.createDirectoryIfMissing False restoreS
+
+    whenM (Dir.doesFileExist previousEventsLogP) $ Dir.renameFile previousEventsLogP restoreEventsLogP
+    whenM (Dir.doesFileExist previousEventsLogCheckP) $ Dir.renameFile previousEventsLogCheckP restoreEventsLogCheckP
+
+    -- create the new events log by appending the 'current' log (in 'partial') to the 'previous' log (in 'restore')
+    runConduitRes $
+      yieldMany [restoreEventsLogP, partialEventsLogP] .|
+      awaitForever sourceFile .|
+      sinkFileCautious previousEventsLogP
+    -- if we did actually have a new event check then copy it, else use the old
+    checkFileToCopy <- do
+      hasContent <- do
+        d <- Dir.doesFileExist partialEventsLogCheckP
+        if d
+          then fmap (not . BL.null) $ BL.readFile partialEventsLogCheckP
+          else pure False
+      if hasContent then pure $ partialEventsLogCheckP else pure $ restoreEventsLogCheckP
+    Dir.copyFile checkFileToCopy previousEventsLogCheckP
+    -- rename the 'previous' folder as the 'current' folder - this signals that restoration is complete
+    Dir.renameDirectory previousS currentS
+  -- we can delete these but for safety we just move them to another folder
+  let recoveredS = currentS <> recoveredN
+  whenM (Dir.doesDirectoryExist $ currentS <> partialN) $ do
+    Dir.createDirectoryIfMissing False recoveredS
+    Dir.renameDirectory (currentS <> partialN) (recoveredS <> partialN)
+  whenM (Dir.doesDirectoryExist $ currentS <> restoreN) $ do
+    Dir.createDirectoryIfMissing False recoveredS
+    Dir.renameDirectory (currentS <> restoreN) (recoveredS <> restoreN)
+
 
 
 
@@ -291,7 +366,6 @@ currentStateFolder c = (aWBConfigFSStateDir $ c) <> "/current"
 previousStateFolder :: AWBConfig AcidWorldBackendFS -> FilePath
 previousStateFolder c = (aWBConfigFSStateDir $ c) <> "/previous"
 
-
 archiveTimeFormat :: String
 archiveTimeFormat = "%0Y-%m-%d_%H-%M-%S-%6q_UTC"
 
@@ -310,11 +384,11 @@ makeSegmentCheckPath dir c ps t = makeSegmentPath dir c ps t <> ".check"
 
 
 
-makeEventPath :: AcidSerialiseEvent t => AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> FilePath
-makeEventPath c t = currentStateFolder c <> "/" <> "events" <> serialiserFileExtension t
+makeEventPathWith :: AcidSerialiseEvent t => FilePath -> AcidSerialiseEventOptions t -> FilePath
+makeEventPathWith stateFolder t = stateFolder <> "/" <> "events" <> serialiserFileExtension t
 
-makeEventsCheckPath :: AcidSerialiseEvent t => AWBConfig AcidWorldBackendFS -> AcidSerialiseEventOptions t -> FilePath
-makeEventsCheckPath c t = makeEventPath c t <> ".check"
+makeEventsCheckPathWith :: AcidSerialiseEvent t => FilePath -> AcidSerialiseEventOptions t -> FilePath
+makeEventsCheckPathWith stateFolder t = makeEventPathWith stateFolder t <> ".check"
 
 getStateFolderReadme :: (MonadIO m) => m FilePath
 getStateFolderReadme = liftIO $ getDataFileName "src/dataFiles/stateFolderReadMe.md"

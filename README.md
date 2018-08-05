@@ -28,7 +28,7 @@ It also allows for something that is simply impossible in acid-state - libraries
 Acid world is structured to allow for multiple possible serialisation strategies and multiple possible backends. Serialisers and backends have to be using the same intermediate types (`ByteString` for example) to be used together. At present the main file system backend can be used with three different serialisers: CBOR, SafeCopy and JSON. The JSON serialiser produces utf-8 encoded files, so you can open them up and edit them by hand if so desired.
 
 #### Composable update events
-Acid state models every event to as a specific data type (produced by Template Haskell). Acid world has a single type class for events, and a single container. Instances look like
+Acid state models every event as a specific data type (produced by Template Haskell). Acid world has a single type class for events, and a single container. Instances look like
     
     instance Eventable "insertUser" where 
       type EventArgs "insertUser" = '[Int, User] -- arguments this event takes

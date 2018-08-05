@@ -43,6 +43,14 @@ modifyTMVar m io = do
   liftIO $ atomically $ TMVar.putTMVar m a'
   pure b
 
+
+modifyTMVarWithOnException :: (MonadUnliftIO m) => TMVar a -> m a -> (a -> m (a, b))  -> m b
+modifyTMVarWithOnException m onExc io  = do
+  a <- liftIO $ atomically $ TMVar.takeTMVar m
+  (a', b) <- onException (io a) (liftIO . atomically . TMVar.putTMVar m =<< onException onExc (liftIO . atomically $ TMVar.putTMVar m a))
+  liftIO $ atomically $ TMVar.putTMVar m a'
+  pure b
+
 modifyTMVarSafe :: (MonadUnliftIO m) => TMVar a -> (a -> m (a, b)) -> m b
 modifyTMVarSafe m io = do
   a <- liftIO $ atomically $ TMVar.takeTMVar m
