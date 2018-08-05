@@ -1,7 +1,9 @@
 ## Acid-world
-[acid-state](https://github.com/acid-state/acid-state) is a great package, but it misses some useful features. Acid-world is a further exploration of the design space in the direction of greater flexibility and usability (it is like a 'world' of different acid 'states'). In particular, acid-world takes advantage of the development of type level programming in Haskell in the last few years: most of the code in this package was simply impossible when acid-state was released. 
+[acid-state](https://github.com/acid-state/acid-state) is a great package, but it misses some useful features and hasn't been under active development for a while. Acid-world is a further exploration of the design space in the direction of greater flexibility and usability (it is supposed to be like a 'world' of different acid 'states'). In particular, acid-world takes advantage of the development of type level programming in Haskell in the last few years: most of the code in this package was simply impossible when acid-state was released.
 
-Like acid-state, the main persistence model used in acid-world is event logging combined with checkpoints. This package is currently at the proof of concept stage, and is not suitable for use in production. 
+Like acid-state, the main persistence model used in acid-world is event logging combined with checkpoints. Marshalling of heterogenous data structures is handled in a type safe way using the excellent [generics-sop](http://hackage.haskell.org/package/generics-sop) and [vinyl] (http://hackage.haskell.org/package/vinyl). 
+
+This package is currently at the proof of concept stage, and is not suitable for use in production. 
 
 ### Features vs acid-state
 
@@ -22,13 +24,13 @@ You can then write queries and updates that specifically operate on that segment
 
 This allows for much better separation of concerns than acid-state, as update and query functions only need to know about the segments that concern them.
 
-It also allows for something that is simply impossible in acid-state - libraries can define state segments and events of their own, and you can add them into your own acid-world. 
+It also allows for something that is simply impossible in acid-state - libraries can define state segments and events of their own, and you can add them into your own instance of acid world. It is also entirely possible to have multiple instances of acid-world open in the same app, addressing different parts of state, with different backends etc if desired.
 
 #### Multiple serialisation options
-Acid world is structured to allow for multiple possible serialisation strategies and multiple possible backends. Serialisers and backends have to be using the same intermediate types (`ByteString` for example) to be used together. At present the main file system backend can be used with three different serialisers: CBOR, SafeCopy and JSON. The JSON serialiser produces utf-8 encoded files, so you can open them up and edit them by hand if so desired.
+Acid world is structured to allow for multiple possible serialisation strategies and multiple possible backends. Serialisers and backends have to be using the same intermediate types (`ByteString` for example) to be used together. At present the main `FS` (file system) backend can be used with three different serialisers: CBOR, SafeCopy and JSON. The JSON serialiser produces utf-8 encoded files, so you can open them up and edit them by hand if so desired.
 
 #### Composable update events
-Acid state models every event as a specific data type (produced by Template Haskell). Acid world has a single type class for events, and a single container. Instances look like
+Acid state models every event as a specific data type (produced by Template Haskell). Acid world, on the other hand, has a single type class for events, and a single container. Instances look like
     
     instance Eventable "insertUser" where 
       type EventArgs "insertUser" = '[Int, User] -- arguments this event takes
@@ -47,7 +49,7 @@ This allows for the definition of a type, `EventC`, that composes events togethe
    
 
 #### User specified invariant checking as part of atomic updates
-Despite our best efforts, Haskell's type system cannot always capture all the invariants we would like to express. Acid world provides for a single invariant function for every state segment, of the form `a -> Maybe Text` where a `Just Text` is interpreted as an error message. You can, eg, restrict the number of users with `if HM.size a > 100 then Just "Only 100 users allowed!" else Nothing` . Invariants are guaranteed to be run every time a segment changes, prior to final persistence of the event. Future development may allow for a way to define invariants on parts of some segments (eg. the specific `(k,v)` change made to a HashMap).
+Despite our best efforts, Haskell's type system cannot always capture all the invariants we would like to express. Acid world provides for a single invariant function for every state segment, of the form `a -> Maybe Text` where `Just Text` is interpreted as an error message. You can, eg, restrict the number of users with `if HM.size a > 100 then Just "Only 100 users allowed!" else Nothing` . Invariants are guaranteed to be run every time a segment changes, prior to final persistence of the event. Future development may allow for a way to define invariants on parts of some segments (eg. the specific `(k,v)` change made to a HashMap).
 
 #### Database backends (eg Postgres)
 Some people like the idea of acid-state, but for whatever reason are required to use a database. Acid-world allows for this. In the current (rudimentary) postgresql backend events are stored in a single events table, while checkpoints are stored in their own tables, one for each segment.
@@ -55,14 +57,14 @@ Some people like the idea of acid-state, but for whatever reason are required to
 #### Alternative persistence strategy for data (keyed maps) that won't fit into memory 
 Perhaps the biggest pain point of `acid-state` is that it requires all data to be in memory all of the time. If you want transparent access to a Haskell type then this is effectively unavoidable. Various attempts have been made to provide an alternative to acid-state here, and this package includes another one (currently named, rather badly, `CacheState`). At present the implementation is fairly basic, but the idea uses a similar strategy to the rest of acid-world - state is separated out into segments, and updates and queries can operate on the segments that are relevant to them. 
 
-The big difference with the rest of acid-world, though, is that the persistence is not event based. The strategy is more like that used by [VCache](http://hackage.haskell.org/package/vcache) (which sadly is not maintained) but a lot less sophisticated (at present at least). CacheState supports keyed maps (and single values, but a lot of the benefit is lost there). The idea is to provide an easy way to persist of set of table like structures (currently HashMap, and more interestingly, [IxSet] (https://hackage.haskell.org/package/ixset-typed). The spine (and with `IxSet`, the indexes) are kept in memory while the values themselves are not (depending on caching policy). This allows you to leverage, eg, the excellent indexing features of `IxSet` while addressing a much larger data set than could be held in memory. The current implementation uses LMDB as a persistence layer, but different backends (anything that can act as a key value store) could be implemented for this as well.
+The big difference with the rest of acid-world, though, is that the persistence is not event based. The strategy is more like that used by [VCache](http://hackage.haskell.org/package/vcache) (which sadly is not maintained) but a lot less sophisticated (at present at least). CacheState supports keyed maps (and single values, but a lot of the benefit is lost there). The idea is to provide an easy way to persist table like structures (currently HashMap, and more interestingly, [IxSet] (https://hackage.haskell.org/package/ixset-typed). The spine (and with `IxSet`, the indexes) are kept in memory while the values themselves are not (depending on caching policy). This allows you to leverage, eg, the excellent indexing features of `IxSet` while addressing a much larger data set than could be held in memory. The current implementation uses LMDB as a persistence layer, but different backends (anything that can act as a key value store) could be implemented for this as well.
 
 After thinking about this a fair amount I'm not sure that any solution can do much better than this and still have any flavour of `acid-state` to it. If you aren't keeping any part of the data structure in memory then you pretty much just have a deserialisation wrapper around something like LMDB, or a database (if you want indexing). But I might be completely wrong - all suggestions and thoughts are welcome!
 
 ### Improvements vs acid-state
 
 #### 'Constant' memory usage
-Due to the way acid-state deserialises it can sometimes use massive amounts of memory when restoring state (I once encountered a situation where it used something like 30GB of memory to restore a state of around 1GB). Acid world attempts to avoid this by deserialising in streams (using conduit), and therefore should never use much more memory than the state itself.
+Due to the way acid-state deserialises it can sometimes use massive amounts of memory when restoring state (I once encountered a situation where it used something like 20GB of memory to restore a state of around 1GB). Acid world attempts to avoid this by deserialising in streams (using conduit), and therefore should never use much more memory than the state itself.
 
 #### No Template Haskell
 The most complicated user land class in acid-world is `Eventable`, which is really just a deconstructed function type definition and constraint. Template Haskell could be used to generate instances of Eventable, but it is not really necessary. Also, acid-world has no equivalent of the `makeAcidic` function - the design does not require a single place where everything is defined, aside from at a type level (the acid world container is parameterised with type level lists of every event and every segment you want to use).
@@ -71,16 +73,16 @@ The most complicated user land class in acid-world is `Eventable`, which is real
 A simple quality of life improvement - acid-world stores a single events log and single file for each segment in a checkpoint. When a new checkpoint occurs a new, dated, folder is created containing the previous state. So you have something like
  
     - current
-      events.log.json
+      events.log.cbor
       - checkpoint 
-        Users.json
-        Addresses.json
+        Users.cbor
+        Addresses.cbor
     - archive
       - 2018-08-04_11-22-44-238800_UTC
-        events.log.json
+        events.log.cbor
         - checkpoint
-          Users.json
-          Address.json
+          Users.cbor
+          Address.cbor
 
 Every folder is a complete, restorable snapshot of the state.
 
@@ -98,6 +100,8 @@ All events are tagged with a UUID and a UTCTime. It would therefore be relativel
 #### Event notifications
 Events have type `Event (n :: Symbol)`. It will be easy enough to provide users with a way of registering pre and post event handlers of the type `Event n -> IO ()` or similar, specialised to individual events (so `Event "insertUser" -> IO ()`) that will be fired every time the event is issued.
 
+#### Compatibility with GHCJS
+Compiling with ghcjs and a localstorage backend to provide browser storage and/or a browser compatible remote backend
 
 ### The state of this code
 
