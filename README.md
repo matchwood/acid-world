@@ -1,7 +1,7 @@
 # Acid-world
-[acid-state](https://github.com/acid-state/acid-state) is a great package, but it misses some useful features and hasn't been under active development for a while. Acid-world is a further exploration of the design space in the direction of greater flexibility and usability (it is supposed to be like a 'world' of different acid 'states'). In particular, acid-world takes advantage of the development of type level programming in Haskell in the last few years: most of the code in this package was simply impossible when acid-state was released.
+[acid-state](https://github.com/acid-state/acid-state) is a great package, but it misses some useful features. Acid-world is a further exploration of the design space in the direction of greater flexibility and usability (it is supposed to be like a 'world' of different acid 'states'). In particular, acid-world takes advantage of the development of type level programming in Haskell in the last few years: most of the code in this package was simply impossible when acid-state was released.
 
-Like acid-state, the main persistence model used in acid-world is event logging combined with checkpoints. Marshalling of heterogenous data structures is handled in a type safe way using the excellent [generics-sop](http://hackage.haskell.org/package/generics-sop) and [vinyl] (http://hackage.haskell.org/package/vinyl). 
+Like acid-state, the main persistence model used in acid-world is event logging combined with checkpoints. Marshalling of heterogenous data structures is handled in a type safe way using the excellent [generics-sop](http://hackage.haskell.org/package/generics-sop) and [vinyl](http://hackage.haskell.org/package/vinyl). 
 
 This package is currently at the proof of concept stage, and is not suitable for use in production. 
 
