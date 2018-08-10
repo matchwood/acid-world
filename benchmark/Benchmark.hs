@@ -20,6 +20,7 @@ import Database.LMDB.Simple
 main :: IO ()
 main = do
 
+--  void $ mapM makeTestState allSerialisers
   let conf = defaultConfig
   -- it seems like we should perRunEnv for the generateUser part of this, but that causes major issues with criterion - something like 3 or 4 order of magnitude slow down in the benchmarked code
   defaultMainWith conf $
@@ -75,6 +76,8 @@ makeTestState (AppValidSerialiser (o :: AcidSerialiseEventOptions s)) = do
   where
     createForNums :: FilePath -> (Int, String) -> IO ()
     createForNums newTDir (n, name) = do
+      Dir.createDirectoryIfMissing True (newTDir <> name)
+
       aw <- insertUsers n $ openAppAcidWorldFresh (const $ AWBConfigFS (newTDir <> name) True) o
       as <- QC.generate $ generateAddresses (n `divInt` 10)
       ps <- QC.generate $ generatePhonenumbers (n `divInt` 10)

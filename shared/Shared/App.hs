@@ -134,9 +134,10 @@ type ValidAppAcidSerialiseBS s b = (
 openAppAcidWorldRestoreState :: (ValidAppAcidSerialise s AcidWorldBackendFS, AcidSerialiseEvent s, AcidSerialiseConstraintAll s AppSegments AppEvents, ValidSegmentsSerialise s AppSegments) => AcidSerialiseEventOptions s -> String -> IO (AppAW s)
 openAppAcidWorldRestoreState opts s = do
   t <- mkTempDir
+  let fsConfig = AWBConfigFS t True
   let e = topLevelStoredStateDir <> "/" <> "testState" <> "/" <> s
   copyDirectory e t
-  aw <- throwEither $ openAcidWorld defaultSegmentsState emptyInvariants (AWBConfigFS t True) AWConfigPureState opts
+  aw <- throwEither $ openAcidWorld defaultSegmentsState emptyInvariants fsConfig AWConfigPureState opts
   -- this is to force the internal state
   i <- query aw fetchUsersStats
   putStrLn $ T.unpack . utf8BuilderToText $ "Opened aw with " <> displayShow i
