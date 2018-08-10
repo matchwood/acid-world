@@ -16,7 +16,6 @@ import Generics.SOP.NP
 import qualified  Data.Vinyl.Derived as V
 import qualified  Data.Vinyl.TypeLevel as V
 import Control.Arrow (left)
-import Control.Monad.ST.Trans
 
 import Acid.Core.Serialise.Abstract
 import Acid.Core.Serialise.Postgresql
@@ -137,7 +136,7 @@ queryLastCheckpointState  defState s t = (fmap . fmap) (npToSegmentsState) segsN
       if length res < 1
         then pure . Right $ getSegmentP ps defState
         else
-          runResourceT $ runSTT $ runConduit  $
+          runResourceT $ runConduit  $
             yieldMany res .| deserialiseSegment t
 
 

@@ -28,7 +28,6 @@ import Acid.Core.Backend.Abstract
 import Acid.Core.Serialise.Abstract
 import Conduit
 import Data.Conduit.Zlib
-import Control.Monad.ST.Trans
 import Control.Arrow (left)
 import qualified Crypto.Hash as Hash
 import qualified Data.ByteArray.Encoding as BA
@@ -318,10 +317,10 @@ readLastCheckpointState middleware defState s t dir = (fmap . fmap) (npToSegment
           eBind (getSegmentHashes segPath segCheckPath) $ \(hash, checkHash) -> do
             if hash /= checkHash
               then pure . Left $ "Invalid checkpoint - check file ("  <> showT segCheckPath <> ": " <> showT checkHash <> ") did not match hash of segment file" <> "(" <> showT segPath <> ": " <>  showT hash <> ")" <> " when reading segment *" <> toUniqueText ps <> "*"
-              else runResourceT $ runSTT $ runConduit $
-              transPipe lift (sourceFile segPath) .|
-              transPipe lift middleware .|
-              deserialiseSegment t
+              else runResourceT $ runConduit $
+               (sourceFile segPath) .|
+               middleware .|
+               deserialiseSegment t
 
     proxyNp :: NP Proxy (ToSegmentFields ss)
     proxyNp = pure_NP Proxy

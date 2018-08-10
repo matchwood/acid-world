@@ -28,15 +28,13 @@ import qualified Data.UUID  as UUID
 import Control.Arrow (left)
 import Control.Monad.ST
 import Conduit
-import Control.Monad.ST.Trans hiding (runST)
-import Control.Monad.ST.Trans.Internal
 
 import Acid.Core.Utils
 import Acid.Core.State
 
 data AcidSerialiserCBOR
 
--- unfortunately we can't use partial parsing as effectively here as with safecopy - the use of the ST monad in CBOR seems to make it impossible to provide a way to loop a partially applied parser due to the (forall s. ) constraint of runST. so instead of partial parsing we loop and provide concatted bytestrings until we get a result
+-- unfortunately we can't use partial parsing as effectively here as with safecopy - the use of the ST monad in CBOR seems to make it impossible to provide a way to loop a partially applied parser due to the (forall s. ) constraint of runST. so instead of partial parsing we loop and provide concatted bytestrings until we get a result. An alternative might be to use stToIO but it would require deserialiseEventStream to wrap a MonadIO m monad
 type CBOREventParser ss nn = (BS.ByteString -> Either Text (Maybe (BS.ByteString, WrappedEvent ss nn)))
 instance AcidSerialiseEvent AcidSerialiserCBOR where
   data AcidSerialiseEventOptions AcidSerialiserCBOR = AcidSerialiserCBOROptions
@@ -84,16 +82,16 @@ instance AcidSerialiseC AcidSerialiserCBOR where
 
 instance (Serialise seg) => AcidSerialiseSegment AcidSerialiserCBOR seg where
   serialiseSegment _ seg = sourceLazy $ toLazyByteString $ encode seg
-
-  deserialiseSegment _ = loop deserialiseIncremental
+  deserialiseSegment _ = do
+    sio <- liftIO $ stToIO deserialiseIncremental
+    loop sio
     where
-      loop :: (Monad m) => ST s (IDecode s seg) -> ConduitT BS.ByteString o (STT s m) (Either Text seg)
-      loop p = do
-        res <- lift $ liftST p
+      loop :: MonadIO m => IDecode RealWorld seg -> ConduitT BS.ByteString o m (Either Text seg)
+      loop res =
         case res of
           (CBOR.Read.Done _ _ x) -> pure . Right $ x
           (CBOR.Read.Fail _ _ err) -> pure $ Left (T.pack $ show err)
-          (CBOR.Read.Partial k) -> await >>= loop . k
+          (CBOR.Read.Partial k) -> loop =<< liftIO . stToIO . k =<< await
 
 
 findCBORParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserCBOR ss nn -> BS.ByteString -> Either Text (Maybe (BS.ByteString, CBOREventParser ss nn))

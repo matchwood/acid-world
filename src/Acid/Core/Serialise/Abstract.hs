@@ -26,7 +26,6 @@ import Data.Typeable
 import qualified  Data.Vinyl.TypeLevel as V
 import Control.Arrow (left)
 import Conduit
-import Control.Monad.ST.Trans
 import qualified  Data.Digest.CRC as CRC
 import qualified  Data.Digest.CRC32 as CRC
 import Data.Serialize
@@ -77,8 +76,8 @@ class AcidSerialiseSegment (t :: k) seg where
   type AcidDeserialiseSegmentT t :: *
   type AcidDeserialiseSegmentT t = AcidSerialiseConduitT t
   serialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> seg -> ConduitT i (AcidSerialiseSegmentT t) m ()
-  -- we have to provide a solution here that allows proper incremental parsing, and the only way to do that with CBOR is to run the conduit with STT. It shouldn't make any difference to other serialisers.
-  deserialiseSegment :: (Monad m) => AcidSerialiseEventOptions t -> ConduitT (AcidDeserialiseSegmentT t) o (STT s m) (Either Text seg)
+  -- because of this https://github.com/well-typed/cborg/issues/156 the cbor partial deserialiser has to run in STT or IO, IO seems cleaner
+  deserialiseSegment :: (MonadIO m) => AcidSerialiseEventOptions t -> ConduitT (AcidDeserialiseSegmentT t) o m (Either Text seg)
 
 
 
