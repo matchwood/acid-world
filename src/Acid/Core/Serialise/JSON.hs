@@ -39,7 +39,7 @@ instance AcidSerialiseEvent AcidSerialiserJSON where
   serialiseStorableEvent _ se = addCRC $ Aeson.encode (toUniqueText (Proxy :: Proxy n)) <> (Aeson.encode se)
   deserialiseStorableEvent :: forall ss nn n. (AcidSerialiseConstraint AcidSerialiserJSON ss n) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseT AcidSerialiserJSON -> (Either Text (StorableEvent ss nn n))
   deserialiseStorableEvent _ t = consumeMatchAndParse (Proxy :: Proxy Text) (toUniqueText (Proxy :: Proxy n)) =<< checkAndConsumeCRC t
-  makeDeserialiseParsers _ _ _ = makeJSONParsers
+  makeDeserialiseParsers _ _ _ = pure makeJSONParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserJSON -> AcidSerialiseParsers AcidSerialiserJSON ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
   deserialiseEventStream  _ ps = connectEitherConduit checkSumConduit $
     deserialiseEventStreamWithPartialParser (findJSONParserForWrappedEvent ps)

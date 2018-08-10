@@ -53,7 +53,7 @@ instance AcidSerialiseEvent AcidSerialiserPostgresql where
 
   serialiseStorableEvent _ n = [PostgresRow n]
   deserialiseStorableEvent = error "deserialiseStorableEvent"
-  makeDeserialiseParsers _ _ _ = makePostgresParsers
+  makeDeserialiseParsers _ _ _ = pure makePostgresParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserPostgresql -> AcidSerialiseParsers AcidSerialiserPostgresql ss nn -> (ConduitT PostgresConduitT (Either Text (WrappedEvent ss nn)) (m) ())
   deserialiseEventStream _ ps = awaitForever loop
     where

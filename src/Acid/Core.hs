@@ -64,9 +64,9 @@ openAcidWorld acidWorldDefaultState acidWorldInvariants acidWorldBackendConfig a
         Right acidWorldState ->  pure . pure $ AcidWorld{..}
   where
     makeBackendHandles :: AWBState b -> m (Either AWException (BackendHandles m ss nn))
-    makeBackendHandles acidWorldBackendState = (fmap . fmap) (\lEvents -> BackendHandles lEvents (getInitialState acidWorldDefaultState acidWorldBackendState acidWorldSerialiserOptions)) $ (loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState acidWorldSerialiserOptions)
-
-    parsers = makeDeserialiseParsers acidWorldSerialiserOptions (Proxy :: Proxy ss) (Proxy :: Proxy nn)
+    makeBackendHandles acidWorldBackendState = do
+      parsers <-  makeDeserialiseParsers acidWorldSerialiserOptions (Proxy :: Proxy ss) (Proxy :: Proxy nn)
+      (fmap . fmap) (\lEvents -> BackendHandles lEvents (getInitialState acidWorldDefaultState acidWorldBackendState acidWorldSerialiserOptions)) $ (loadEvents (deserialiseEventStream acidWorldSerialiserOptions parsers) acidWorldBackendState acidWorldSerialiserOptions)
 
 closeAcidWorld :: (MonadIO m) => AcidWorld ss nn t -> m ()
 closeAcidWorld (AcidWorld {..}) = do

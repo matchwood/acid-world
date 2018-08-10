@@ -130,12 +130,12 @@ prop_serialiseEventEqualDeserialise o = forAll genStorableEvent $ \e ->
 
 
 prop_serialiseWrappedEventEqualDeserialise :: forall s. AppValidSerialiserConstraint s  => AcidSerialiseEventOptions s -> QC.Property
-prop_serialiseWrappedEventEqualDeserialise o = forAll genStorableEvent $ \e ->
+prop_serialiseWrappedEventEqualDeserialise o = forAll genStorableEvent $ \e -> ioProperty $ do
   let serialised = serialiseStorableEvent o e
-      deserialisedE = deserialiseWrappedEvent o serialised
-  in case deserialisedE of
-      Left r -> property $ QCP.failed{QCP.reason = T.unpack $ "Error encountered when deserialising: " <> r}
-      (Right (e'  :: WrappedEvent AppSegments AppEvents)) -> show (WrappedEvent e) === show e'
+  deserialisedE <- deserialiseWrappedEvent o serialised
+  case deserialisedE of
+    Left r -> pure $ property $ QCP.failed{QCP.reason = T.unpack $ "Error encountered when deserialising: " <> r}
+    (Right (e'  :: WrappedEvent AppSegments AppEvents)) -> pure $ show (WrappedEvent e) === show e'
 
 
 

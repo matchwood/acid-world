@@ -34,8 +34,7 @@ import Acid.Core.State
 
 data AcidSerialiserCBOR
 
--- unfortunately we can't use partial parsing as effectively here as with safecopy - the use of the ST monad in CBOR seems to make it impossible to provide a way to loop a partially applied parser due to the (forall s. ) constraint of runST. so instead of partial parsing we loop and provide concatted bytestrings until we get a result. An alternative might be to use stToIO but it would require deserialiseEventStream to wrap a MonadIO m monad
-type CBOREventParser ss nn = (BS.ByteString -> Either Text (Maybe (BS.ByteString, WrappedEvent ss nn)))
+type CBOREventParser ss nn = (IDecode RealWorld (WrappedEvent ss nn))
 instance AcidSerialiseEvent AcidSerialiserCBOR where
   data AcidSerialiseEventOptions AcidSerialiserCBOR = AcidSerialiserCBOROptions
   type AcidSerialiseParser AcidSerialiserCBOR ss nn = CBOREventParser ss nn
@@ -45,31 +44,32 @@ instance AcidSerialiseEvent AcidSerialiserCBOR where
   serialiseStorableEvent o se = addCRC $ toLazyByteString $ serialiseCBOREvent o se
   deserialiseStorableEvent o t = (left (T.pack . show)) . decodeOrFail (deserialiseCBOREvent o) =<< checkAndConsumeCRC t
   makeDeserialiseParsers _ _ _ = makeCBORParsers
-  deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserCBOR -> AcidSerialiseParsers AcidSerialiserCBOR ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
-  deserialiseEventStream  _ ps = connectEitherConduit checkSumConduit $ awaitForever (loop Nothing)
+  deserialiseEventStream :: forall ss nn m. (MonadIO m) => AcidSerialiseEventOptions AcidSerialiserCBOR -> AcidSerialiseParsers AcidSerialiserCBOR ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
+  deserialiseEventStream  _ ps = do
+    pFinder <- liftIO $ stToIO (CBOR.Read.deserialiseIncremental $ findCBORParserForWrappedEventIO ps)
+    connectEitherConduit checkSumConduit $ runLoop pFinder
     where
-      loop :: (Maybe (CBOREventParser ss nn)) -> BS.ByteString ->  ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ()
-      loop Nothing t = do
-        case findCBORParserForWrappedEvent ps t of
-          Left err -> yield (Left err) >> awaitForever (loop Nothing)
-          Right Nothing -> do
-            mt <- await
-            case mt of
-              Nothing -> yield $  Left $ "Unexpected end of conduit values when still looking for parser"
-              Just nt -> loop Nothing (t <> nt)
-          Right (Just (bs, p)) -> (loop (Just p) bs)
-      loop (Just p) t =
-        case p t of
-          Left err -> yield (Left err) >> awaitForever (loop Nothing)
-          Right Nothing -> do
-            mt <- await
-            case mt of
-              Nothing -> yield $  Left $ "Unexpected end of conduit values when named event has only been partially parsed"
-              Just nt -> loop (Just p) (t <> nt)
-          Right (Just (bs, e)) -> yield (Right e) >> (if BS.null bs then  awaitForever (loop Nothing) else loop Nothing bs)
-
-
-
+      runLoop :: IDecode RealWorld (CBOREventParser ss nn) -> ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ()
+      runLoop pFinder = loop (Left pFinder) =<< await
+        where
+          loop :: (Either (IDecode RealWorld (CBOREventParser ss nn)) (CBOREventParser ss nn)) -> Maybe BS.ByteString ->  ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ()
+          loop (Left pfinderRes) t = do
+            case pfinderRes of
+              (CBOR.Read.Done bs _ eParser) -> loop (Right eParser) (Just bs)
+              (CBOR.Read.Fail _ _ err) -> yield (Left . T.pack $ "Could not deserialise an event name for finding a parser: " <> show err) >> (loop (Left pFinder) =<< await)
+              (CBOR.Read.Partial k) -> do
+                case t of
+                  Nothing -> pure () -- no more values in the stream
+                  Just _ -> do
+                    nextRes <- liftIO . stToIO . k $ t
+                    loop (Left nextRes) =<< await
+          loop (Right res) t = do
+            case res of
+              (CBOR.Read.Done bs _ e) -> yield (Right e) >> (if BS.null bs then (loop (Left pFinder)) =<< await else loop (Left pFinder) (Just bs))
+              (CBOR.Read.Fail _ _ err) -> yield (Left . T.pack . show $ err) >> (loop (Left pFinder) =<< await)
+              (CBOR.Read.Partial k) -> do
+                nextRes <- liftIO . stToIO . k $ t
+                loop (Right nextRes) =<< await
 
 
 class (ValidEventName ss n, All Serialise (EventArgs n)) => CanSerialiseCBOR ss n
@@ -94,27 +94,26 @@ instance (Serialise seg) => AcidSerialiseSegment AcidSerialiserCBOR seg where
           (CBOR.Read.Partial k) -> loop =<< liftIO . stToIO . k =<< await
 
 
-findCBORParserForWrappedEvent :: forall ss nn. AcidSerialiseParsers AcidSerialiserCBOR ss nn -> BS.ByteString -> Either Text (Maybe (BS.ByteString, CBOREventParser ss nn))
-findCBORParserForWrappedEvent ps t =
-  case runST $ decodePartial decode t of
-    Left err -> Left err
-    Right Nothing -> Right Nothing
-    Right (Just (bs, name)) ->
-      case HM.lookup name ps of
-        Nothing -> Left $ "Could not find parser for event named " <> name
-        Just p -> Right . Just $ (bs, p)
+findCBORParserForWrappedEventIO :: forall ss nn s. AcidSerialiseParsers AcidSerialiserCBOR ss nn -> Decoder s (CBOREventParser ss nn)
+findCBORParserForWrappedEventIO ps = do
+  name <- decode
+  case HM.lookup name ps of
+    Nothing -> fail $ "Could not find parser for event named " <> (T.unpack name)
+    Just p -> pure p
 
 
 
-makeCBORParsers :: forall ss nn. (All (CanSerialiseCBOR ss) nn) => AcidSerialiseParsers AcidSerialiserCBOR ss nn
-makeCBORParsers =
-  let (wres) = cfoldMap_NP (Proxy :: Proxy (CanSerialiseCBOR ss)) (\p -> [toTaggedTuple p]) proxyRec
-  in HM.fromList wres
+makeCBORParsers :: forall ss nn m. (MonadIO m, All (CanSerialiseCBOR ss) nn) => m (AcidSerialiseParsers AcidSerialiserCBOR ss nn)
+makeCBORParsers = do
+  wres <- sequence $ cfoldMap_NP (Proxy :: Proxy (CanSerialiseCBOR ss)) (\p -> [toTaggedTuple p]) proxyRec
+  pure $ HM.fromList wres
   where
     proxyRec :: NP Proxy nn
     proxyRec = pure_NP Proxy
-    toTaggedTuple :: (CanSerialiseCBOR ss n) => Proxy n -> (Text, CBOREventParser ss nn)
-    toTaggedTuple p = (toUniqueText p, decodeWrappedEventCBOR p)
+    toTaggedTuple :: (CanSerialiseCBOR ss n) => Proxy n -> m (Text, CBOREventParser ss nn)
+    toTaggedTuple p = do
+      r <-decodeWrappedEventCBOR p
+      pure (toUniqueText p, r)
 
 
 decodePartial :: Decoder s a ->  BS.ByteString -> ST s (Either Text (Maybe (BS.ByteString, a)))
@@ -142,8 +141,8 @@ decodeOrFail decoder bs0 =
     supplyAllInput _ (CBOR.Read.Fail _ _ exn) = return (Left exn)
 
 
-decodeWrappedEventCBOR :: forall n ss nn. (CanSerialiseCBOR ss n) => Proxy n -> CBOREventParser ss nn
-decodeWrappedEventCBOR _ t = runST $ decodePartial doDeserialiseWrappedEvent t
+decodeWrappedEventCBOR ::forall m n ss nn. (MonadIO m, CanSerialiseCBOR ss n) => Proxy n -> m (CBOREventParser ss nn)
+decodeWrappedEventCBOR _ = liftIO . stToIO $ CBOR.Read.deserialiseIncremental doDeserialiseWrappedEvent
   where
     doDeserialiseWrappedEvent :: Decoder s (WrappedEvent ss nn)
     doDeserialiseWrappedEvent = do

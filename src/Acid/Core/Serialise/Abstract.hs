@@ -56,8 +56,8 @@ class (Semigroup (AcidSerialiseT t), Monoid (AcidSerialiseT t)) => AcidSerialise
   -- @todo we don't actually use this anywhere - perhaps just remove it?
   deserialiseStorableEvent :: (AcidSerialiseConstraint t ss n) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> (Either Text (StorableEvent ss nn n))
 
-  makeDeserialiseParsers :: (ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn) => AcidSerialiseEventOptions t -> Proxy ss -> Proxy nn -> AcidSerialiseParsers t ss nn
-  deserialiseEventStream :: (Monad m) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> (ConduitT (AcidSerialiseConduitT t) (Either Text (WrappedEvent ss nn)) (m) ())
+  makeDeserialiseParsers :: (ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn, MonadIO m) => AcidSerialiseEventOptions t -> Proxy ss -> Proxy nn -> m (AcidSerialiseParsers t ss nn)
+  deserialiseEventStream :: (MonadIO m) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> (ConduitT (AcidSerialiseConduitT t) (Either Text (WrappedEvent ss nn)) (m) ())
 
 toConduitType :: (AcidSerialiseEvent t) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> AcidSerialiseConduitT t
 toConduitType = fst . tConversions
@@ -243,7 +243,7 @@ type PartialParserBS a = PartialParser BS.ByteString a
 
 fmapPartialParser :: (a -> Either Text b) -> PartialParser s a -> PartialParser s b
 fmapPartialParser f p = PartialParser $ \t -> do
-  res <- (extractPartialParser p) t
+  res <- runPartialParser p t
   case res of
     (Left newP) -> pure (Left $ fmapPartialParser f newP)
     (Right (s, a)) -> do
@@ -299,13 +299,17 @@ deserialiseWithPartialParserTransformer origParser = awaitForever $ loop origPar
 {-
 this is a helper function for deserialising a single wrapped event - at the moment it is really just used for testing serialisation
 -}
-deserialiseWrappedEvent :: forall t ss (nn :: [Symbol]). (AcidSerialiseEvent t, ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> Either Text (WrappedEvent ss nn)
-deserialiseWrappedEvent o s = deserialiseWrappedEventWithParsers o (makeDeserialiseParsers o (Proxy :: Proxy ss) (Proxy :: Proxy nn)) (toConduitType o s)
+deserialiseWrappedEvent :: forall t ss m (nn :: [Symbol]). (AcidSerialiseEvent t, ValidEventNames ss nn, AcidSerialiseConstraintAll t ss nn, MonadIO m) => AcidSerialiseEventOptions t -> AcidSerialiseT t -> m (Either Text (WrappedEvent ss nn))
+deserialiseWrappedEvent o s = do
+  ps <- makeDeserialiseParsers o (Proxy :: Proxy ss) (Proxy :: Proxy nn)
+  deserialiseWrappedEventWithParsers o ps (toConduitType o s)
 
-deserialiseWrappedEventWithParsers :: (AcidSerialiseEvent t) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> AcidSerialiseConduitT t -> Either Text (WrappedEvent ss nn)
-deserialiseWrappedEventWithParsers o ps s =
-  case runIdentity . runConduit $ yieldMany [s] .| (deserialiseEventStream o ps) .| sinkList of
-    [] -> Left "Expected to deserialise one event, got none"
-    [Left err] -> Left err
-    [Right a] -> Right a
-    xs -> Left $ "Expected to deserialise one event, got " <> (T.pack (show (length xs)))
+deserialiseWrappedEventWithParsers :: (AcidSerialiseEvent t, MonadIO m) => AcidSerialiseEventOptions t -> AcidSerialiseParsers t ss nn -> AcidSerialiseConduitT t -> m (Either Text (WrappedEvent ss nn))
+deserialiseWrappedEventWithParsers o ps s = do
+  res <- runConduit $ yieldMany [s] .| (deserialiseEventStream o ps) .| sinkList
+  pure $
+    case res of
+      [] -> Left $ "Expected to deserialise one event, got none"
+      [Left err] -> Left $ err
+      [Right a] -> Right $ a
+      xs -> Left $ "Expected to deserialise one event, got " <> (T.pack (show (length xs)))

@@ -38,7 +38,7 @@ instance AcidSerialiseEvent AcidSerialiserSafeCopy where
   serialiserFileExtension _ = ".safecopy"
   serialiseStorableEvent o se = addCRC $ runPutLazy $ serialiseSafeCopyEvent o se
   deserialiseStorableEvent o t = (left (T.pack) . (runGetLazy (deserialiseSafeCopyEvent o))) =<< checkAndConsumeCRC t
-  makeDeserialiseParsers _ _ _ = makeSafeCopyParsers
+  makeDeserialiseParsers _ _ _ = pure makeSafeCopyParsers
   deserialiseEventStream :: forall ss nn m. (Monad m) => AcidSerialiseEventOptions AcidSerialiserSafeCopy -> AcidSerialiseParsers AcidSerialiserSafeCopy ss nn -> (ConduitT BS.ByteString (Either Text (WrappedEvent ss nn)) (m) ())
   deserialiseEventStream  _ ps = connectEitherConduit checkSumConduit $
 
